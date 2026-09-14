@@ -1,0 +1,31 @@
+# Local data and runtime
+/data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Secrets and local config
+.env
+.env.local
+*.pem
+*.key
+
+# Go
+/bin/
+*.test
+*.out
+vendor/
+
+# AI tooling, never committed
+CLAUDE.md
+.claude/
+.cursor/
+.cursorrules
+.aider*
+.github/copilot-instructions.md
+*.mdc
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
