@@ -130,6 +130,16 @@ The array is sorted by `user_uuid` and each provider list by name, so a widget a
 
 ## Day two
 
+**Run the precondition fix before the first apply.** Nuno cannot do it itself and cannot even read the setting that makes it necessary, so if you skip this, every quota Nuno sets is rewritten at the next OIDC login and the reconcile looks broken for a reason that is not Nuno. This is the step to run first on any stack, before `observe`, before `plan`, before `reconcile`.
+
+```shell
+nuno doctor --fix > nuno-fix.sh   # emit the commands, do not run them
+less nuno-fix.sh                  # read them: they move the default off oidc_login
+sh nuno-fix.sh
+```
+
+Then the read-only sequence, which changes nothing on any service:
+
 ```shell
 nuno doctor                     # every precondition, with the fix for each
 nuno observe                    # read everything, write nothing

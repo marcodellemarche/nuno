@@ -111,7 +111,9 @@ services:
 
 It binds to localhost unless told otherwise and is meant to sit behind the same SSO or forward-auth layer as the rest of the stack. A static admin credential is supported so an unproxied deployment is never an unauthenticated one. Nuno does not implement login in the MVP.
 
-Start with `nuno doctor`, which checks every precondition and prints the command that fixes each failure.
+**Before the first apply, run the precondition fix.** Nuno refuses to manage a Nextcloud whose default quota still lives in `oidc_login_default_quota`, and it cannot even read that setting, because OCS does not expose system config. Until it is moved to `files/default_quota`, every OIDC login rewrites the quota and every reconcile looks broken. `nuno doctor --fix` prints the commands and never runs them, since reaching `occ` would mean root on the host. Run it, read it, execute it, then continue.
+
+After that, `nuno doctor` checks every precondition and prints the command that fixes each failure.
 
 Nuno needs credentials that can actually write. On Nextcloud an app password is not enough: quota changes require `allowed_no_password_confirmation_ranges` or a dedicated admin without 2FA. On Immich an API key scoped to `adminUser.read` and `adminUser.update` is enough. `nuno doctor` proves it with a write probe against an account Nuno already manages, instead of discovering it mid-reconcile.
 
