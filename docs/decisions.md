@@ -623,3 +623,20 @@ The safety of this does not rest on the shape test being right about what a subj
 - `backend` is not a usable discriminator and is not consulted: both captured accounts report `Database`.
 - The contract test asserts the outcome on both captured accounts: `alice` carries a subject, `admin` does not.
 - The open question from ADR-0021 stays open, with a partial answer of no: the subject is Authelia's opaque identifier, not LLDAP's `entryuuid`, so email does not leave the design. Confirming it takes one `ldapsearch` and one query against Authelia's storage, on the host where the stack runs.
+
+## ADR-0029: The per-person page trusts the proxy, not a token
+
+**Status: Accepted (2026-09-15).** Extends [ADR-0017](#adr-0017-usage-api-dashboard-first-per-person-second). Needed for the shared dashboard.
+
+**Context.** ADR-0017 deferred the per-person endpoint and imagined it authenticated by an opaque per-user token, issued from the UI. That was written before the dashboard was real. When the first widget shipped, the requirement came back in a form the token does not fit: a shared Homepage should show each person **their own** quota, and the widget that can do it is an `iframe`, not a `customapi`.
+
+A `customapi` widget is fetched by the Homepage server with one key, so it cannot vary by viewer. That is why the first cards either named everyone or aggregated per service, and neither shows a person their own ceiling. An `iframe` is different: the browser loads it, so it carries the session cookie, and the proxy's forward auth runs again on that request. The identity is then already established by the proxy, and a token would be a second credential to issue, store, revoke and explain.
+
+**Decision.** Add `GET /me`, which reads the `Remote-User` header the proxy sets and renders that person's own per-provider summary. The header is believed **only when the request arrives from `NUNO_TRUSTED_PROXY`**, the network the proxy runs on; with nothing configured, nothing is trusted and the page answers 403. The page is not behind the admin password, because the person reading it is not an admin: the proxy authenticates them.
+
+**Consequences.**
+- The per-user token from ADR-0017 is not built. It remains the answer for a stack with no proxy in front, which is a deployment shape Nuno supports but the homelab does not use. If one appears, it is a new ADR.
+- Trusting a header is only safe because of the network check. Without `NUNO_TRUSTED_PROXY`, any container on the same network could claim to be somebody else; the setting defaults to empty and the check is the first thing `/me` does.
+- The page is a widget body: no navigation, no admin actions, so an iframe cannot become a way into the admin surface.
+- The proxy must allow the page to be framed, and it must not leave a client-supplied `Remote-User` in place. Authelia overwrites it via forward auth `copy_headers`, and the homelab's Caddy block removes `X-Frame-Options` and sets `frame-ancestors` for the dashboard origin.
+- `?detail=service` and `?detail=provider` remain for a `customapi` widget, which is still the right tool when the audience is everyone or only admins.
