@@ -8,9 +8,19 @@
       :root {
         color-scheme: light dark;
       }
+      html,
+      body {
+        height: 100%;
+      }
       body {
         margin: 0;
         padding: 0.25rem;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        /* Centered, so the card looks intentional at any height the widget
+           gives the iframe. */
+        justify-content: center;
         font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
         font-size: 0.8rem;
         color: inherit;
