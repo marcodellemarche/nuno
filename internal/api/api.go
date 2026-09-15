@@ -1,0 +1,61 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+
+// Package api holds Nuno's HTTP surface.
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"time"
+)
+
+// Pinger is the part of the store /healthz needs. Keeping it this narrow means
+// the handler can be tested without a database.
+type Pinger interface {
+	PingContext(ctx context.Context) error
+}
+
+type Options struct {
+	Version string
+	DB      Pinger
+	Log     *slog.Logger
+}
+
+// Routes builds the admin surface. It binds to localhost unless the
+// configuration says otherwise, which is checked when the config is loaded
+// (NFR-14).
+func Routes(opts Options) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", healthz(opts))
+	return mux
+}
+
+// healthz answers for the process, not for the providers: per-provider health
+// is its own thing in the UI. It pings the database, because a process that
+// cannot reach its own state is not healthy in any useful sense.
+func healthz(opts Options) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		body := map[string]any{"status": "ok", "version": opts.Version}
+		code := http.StatusOK
+
+		if opts.DB != nil {
+			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+			defer cancel()
+			if err := opts.DB.PingContext(ctx); err != nil {
+				body["status"] = "unavailable"
+				body["detail"] = "database unreachable"
+				code = http.StatusServiceUnavailable
+				opts.Log.Error("healthz: database unreachable", "error", err)
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(code)
+		if err := json.NewEncoder(w).Encode(body); err != nil {
+			opts.Log.Error("healthz: write response", "error", err)
+		}
+	}
+}

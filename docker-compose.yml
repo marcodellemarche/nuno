@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+services:
+  nuno:
+    build:
+      context: .
+      args:
+        VERSION: ${NUNO_VERSION:-dev}
+    image: ghcr.io/marcodellemarche/nuno:${NUNO_VERSION:-dev}
+    env_file: .env
+    environment:
+      # Inside a container, binding to loopback would make Nuno unreachable
+      # from the proxy, so it binds to the container's interfaces and is
+      # published only to the host's loopback below. NFR-14 is satisfied by
+      # the port mapping, and the acknowledgement says that is deliberate.
+      NUNO_ADDR: 0.0.0.0:8080
+      NUNO_ALLOW_PUBLIC_BIND: "true"
+      NUNO_DATA_DIR: /data
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+    # No healthcheck: the runtime image is distroless and has no shell or
+    # curl to run one with. /healthz is there for the proxy and for monitoring.
