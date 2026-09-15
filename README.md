@@ -110,7 +110,7 @@ services:
 
 It binds to localhost unless told otherwise and is meant to sit behind the same SSO or forward-auth layer as the rest of the stack. A static admin credential is supported so an unproxied deployment is never an unauthenticated one. Nuno does not implement login in the MVP.
 
-Nuno needs credentials that can actually write. On Nextcloud an app password is not enough: quota changes require `allowed_no_password_confirmation_ranges` or a dedicated admin without 2FA. On Immich an API key scoped to `adminUser.read` and `adminUser.update` is enough. Nuno proves this at startup with a write probe instead of discovering it mid-reconcile.
+Nuno needs credentials that can actually write. On Nextcloud an app password is not enough: quota changes require `allowed_no_password_confirmation_ranges` or a dedicated admin without 2FA. On Immich an API key scoped to `adminUser.read` and `adminUser.update` is enough. `nuno doctor` proves it with a write probe against an account Nuno already manages, instead of discovering it mid-reconcile.
 
 ## Contributing
 

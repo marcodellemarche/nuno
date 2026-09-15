@@ -91,18 +91,21 @@ type HealthResult struct {
     Reachable   bool
     Version     string
     InSupported bool
-    CanWrite    bool // result of an actual write probe, see ADR-0014
     Err         error
 }
+
+type WriteAccess uint8 // Unproven, Yes, No
 ```
 
 Writes address `ExternalID` and nothing else. `Username` and `Email` exist to match an account to a person once; after that the link is stored, so a rename in the directory cannot retarget a write.
 
 `GetAccount` exists because the apply-time re-check needs one account, not all of them: re-listing on Nextcloud has side effects and does not scale. `MatchKeys` is what the adapter *can* do; which one is used is instance configuration, and the instance's choice wins.
 
+`Health()` reads and nothing else: reachability, version, whether the credential authenticates. It may be called as often as the UI needs, and it does not read user details, so the home-folder side effect stays inside `observe()`. Whether the credential can actually write is a separate question answered by the write probe, which needs no method of its own: `GetAccount`, then `SetQuota` with the value just observed, then `GetAccount` again, sequenced in `internal/reconcile` and owned by `nuno doctor`. It runs after linking, against a linked account whose quota is already a fixed point of `NormalizeQuota`, so it can never alter anyone's quota and never writes to an account Nuno does not manage. With no eligible account, `WriteAccess` stays `Unproven`, which is not the same as `No`. See [ADR-0025](docs/decisions.md#adr-0025-health-reads-the-write-probe-is-a-separate-step).
+
 `NormalizeQuota` returns what the provider will actually store when asked for a value. The planner compares normalized to observed, never raw to raw, because at least one provider silently rewrites what you give it. `NormalizeQuota(Unlimited)` is `Unlimited`; `NormalizeQuota(Unknown)` is a programming error. See [ADR-0011](docs/decisions.md#adr-0011-quota-is-a-tagged-value-not-a-nullable-integer).
 
-### Quota is four states, not a number
+### Quota is three states, not a number
 
 ```go
 type QuotaKind uint8 // Unknown, Unlimited, Bytes
@@ -113,7 +116,7 @@ type Quota struct { Kind QuotaKind; Bytes int64 }
 
 There is deliberately no `ProviderDefault` kind: no adapter can produce one honestly (Nextcloud resolves `default` before the API sees it, Immich has no instance default), and a state nothing can emit is a state nothing will handle correctly. Nextcloud's `"none"` and `-3` both decode to `Unlimited`.
 
-`NormalizeQuota` for Nextcloud is the `humanFileSize` round trip: divide by 1024 repeatedly, rounding to one decimal at each step, until below 1024, then parse the resulting string back to bytes. Confirm it against `Util::humanFileSize` in the first adapter commit; the captured pairs in `tests/fixtures/` are the test vector.
+`NormalizeQuota` for Nextcloud is the `humanFileSize` round trip: divide by 1024 and round to **zero** decimals for the first step (bytes to KB), then divide by 1024 and round to **one** decimal for every step after it, until the value is below 1024, then parse the resulting string back to bytes. The zero-decimal first step is not a detail, it is what the captures show. Confirm it against `Util::humanFileSize` in the first adapter commit; the captured pairs in `tests/fixtures/` are the test vector, and the property to assert is the round trip. See [ADR-0021](docs/decisions.md#adr-0021-corrections-from-the-captured-responses) point 9.
 
 ### Provider notes
 
@@ -127,8 +130,8 @@ These are verified against Nextcloud `stable34` and Immich v3.2.0 (spec `v3.2.1`
 - A complete quota object with `firstLoginTimestamp` of 0 means usage is **known and zero**, not unknown: the account exists and holds nothing, because nobody can upload without authenticating. Such an account is fully writable, which is what lets a new member's quota be correct before they first open the service. See [ADR-0024](docs/decisions.md#adr-0024-a-person-who-has-never-logged-in-still-gets-their-quota).
 - Write: `PUT /ocs/v2.php/cloud/users/{id}` with `key=quota&value=<bytes>`. The value is stored through `humanFileSize`, which rounds to one decimal per unit, so `NormalizeQuota` must apply the same transform. Measured: 26844594176 in, 26843545600 out; 53687091200 stores as `"50 GB"`.
 - Unlimited is written as `value=none`, never as `-3`: a numeric -3 is parsed as a byte count, which is the most destructive value the API accepts. `files/allow_unlimited_quota` can refuse it, which is a typed error, not a crash.
-- Auth: an app password cannot write (`PasswordConfirmationRequired`, verified: 403). Either whitelist Nuno's address in `allowed_no_password_confirmation_ranges`, or use a dedicated admin without 2FA, which is verified to work. `Health()` proves it with a write probe.
-- Startup check: refuse to manage an instance where `oidc_login_default_quota` is set, or where `user_ldap` defines `ldapQuotaAttribute` or `ldapQuotaDefault`. Both rewrite quotas behind Nuno's back, the first on every OIDC login.
+- Auth: an app password cannot write (`PasswordConfirmationRequired`, verified: 403). Either whitelist Nuno's address in `allowed_no_password_confirmation_ranges`, or use a dedicated admin without 2FA, which is verified to work. The write probe proves it, after linking, not from `Health()`.
+- Startup check: refuse to manage an instance where `user_ldap` defines `ldapQuotaAttribute` or `ldapQuotaDefault`. Those are app config and OCS exposes them. `oidc_login_default_quota` rewrites quotas on every OIDC login and is the worst of the three, but it is system config and OCS cannot read it at all: `nuno doctor --fix` emits a script that checks and moves it. Do not write a startup check that pretends otherwise. See [ADR-0027](docs/decisions.md#adr-0027-a-competing-writer-nuno-cannot-see).
 - Writes are limited to 50 per 10 minutes. A 429 is a `ThrottledError`, not a failure.
 - On `/ocs/v2.php` the HTTP status and `ocs.meta.statuscode` agree (the write probe returned 403 in both). Parse the envelope, read both, treat a disagreement as a `ProviderError`. The 997-with-HTTP-200 convention belongs to `/ocs/v1.php` and does not apply here.
 - Reading creates missing home folders. Observe is not side-effect free here.
@@ -299,6 +302,7 @@ Authorization: Bearer <admin key>
       "budget_bytes": 214748364800,
       "used_bytes": 49392123904,
       "used_percent": 23.0,
+      "complete": true,
       "providers": [
         {"type": "nextcloud", "quota_bytes": 53687091200, "used_bytes": 1073741824,
          "used_percent": 2.0, "managed": true, "status": "ok",
@@ -314,9 +318,11 @@ Authorization: Bearer <admin key>
 
 The **member endpoint**, `GET /api/v1/me/usage`, returns one person's own entry in the same shape, authenticated by an opaque per-user token. It ships when there are non-admin members to serve.
 
-Rules that hold for both: `quota_bytes` is always the **observed** ceiling, never a desired one; `null` means unlimited; `used_percent` is `null` when the ceiling is unlimited or zero, never `NaN`; `observed_at` and `status` are per provider; `managed: false` marks a ceiling left over from a policy that no longer allocates that provider. Each user entry carries a stable `user_uuid` and the array is sorted by it, because a widget addresses fields by path and an unstable order would swap two people's numbers. Neither credential grants writes.
+Rules that hold for both: `quota_bytes` is always the **observed** ceiling, never a desired one; `null` means unlimited, but only where `status` is `ok` or `stale`; `used_percent` is `null` when the ceiling is unlimited or zero, never `NaN`; `observed_at` and `status` are per provider; `managed: false` marks a ceiling left over from a policy that no longer allocates that provider. Each user entry carries a stable `user_uuid` and the array is sorted by it, because a widget addresses fields by path and an unstable order would swap two people's numbers. Neither credential grants writes.
 
-`status` is `ok` while `observed_at` is within twice the refresh interval, `stale` beyond it, `unavailable` when the last observe failed. The refresh interval defaults to 15 minutes.
+A number is readable only together with its `status`. Where `status` is `unknown` or `unavailable`, `quota_bytes`, `used_bytes` and `used_percent` are `null` and mean nothing, and the user entry's `complete` is `false`. The user-level `budget_bytes` and `used_bytes` sum the values that are known, so `null` there keeps meaning unlimited and never leaks an unknown. A consumer that reads the numbers and ignores `status` will show unlimited for an account whose storage could not be read, which is why the documented widget snippet reads both. See [ADR-0026](docs/decisions.md#adr-0026-the-usage-contract-needs-a-name-for-unknown).
+
+`status` is `ok` while `observed_at` is within twice the refresh interval, `stale` beyond it, `unavailable` when the last observe failed, and `unknown` when the call succeeded but the provider's answer did not carry usable values (Nextcloud's `quota` serialized as `[]`, or Immich's two counters disagreeing beyond the threshold). The refresh interval defaults to 15 minutes. A never-logged-in account is `ok` with a usage of zero, per [ADR-0024](docs/decisions.md#adr-0024-a-person-who-has-never-logged-in-still-gets-their-quota), not `unknown`.
 
 Before M2 there is no policy, so `budget_bytes` is the sum of observed ceilings and `managed` is `false` everywhere. The shape does not change when policy arrives, only the meaning of those two fields. See [ADR-0022](docs/decisions.md#adr-0022-what-the-usage-endpoint-means-before-policy-exists).
 
@@ -361,7 +367,7 @@ Accepted: **Go**, see [ADR-0001](docs/decisions.md#adr-0001-tech-stack).
 
 ## 9. Observability
 
-- `/healthz` for the process, plus per-provider health in the UI: reachable, version, in supported range, and whether the write probe succeeded.
+- `/healthz` for the process, plus per-provider health in the UI: reachable, version, in supported range, and write access as `Unproven`, `Yes` or `No` from the last probe.
 - Structured JSON logs, one line per change.
 - `/metrics` for Prometheus, Later.
 - Webhook notification on failure and on newly guarded changes, keyed so a persistent guarded change does not notify every cycle.
@@ -384,7 +390,7 @@ Four properties get a dedicated test each, because they are the ones that hurt w
 3. A shrink at or below current usage is never applied without consent.
 4. A change against unknown usage is never applied, with or without consent.
 
-Fixtures must include the shapes that break naive decoding, all of them real responses: an OCS error body returned with HTTP 200, a `quota` field serialized as `[]`, a quota of `-3` and of `"none"`, a user with `used: 0` and no `total`, and a 429.
+Fixtures must include the shapes that break naive decoding, all of them real responses: a `quota` field serialized as `[]`, a quota of `-3` and of `"none"`, an incomplete quota object missing `total` or `relative`, a complete quota object with `firstLoginTimestamp` of 0 (known and zero, not unknown), and a 429. The OCS error body returned with HTTP 200 is not among them: on `/ocs/v2.php` the status and `ocs.meta.statuscode` agree, and [ADR-0021](docs/decisions.md#adr-0021-corrections-from-the-captured-responses) dropped it as a requirement on this path.
 
 `tests/fixtures/` already holds responses captured from a live Nextcloud 34.0.4 and Immich v3.2.0 on 2026-09-15, including the 403 write probe and both sides of the lossy round trip. The degraded shapes are not among them and still need writing.
 

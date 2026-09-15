@@ -4,7 +4,9 @@ This is a log. Accepted decisions are not rewritten. If one is reversed, a new e
 
 Format: context, options, decision, consequences.
 
-ADR-0001 to ADR-0010 were written during the design freeze of 2026-09-14. A review on 2026-09-15, checking the design against provider source code and against the stack it will actually run on, found that several of them rested on assumptions that turned out to be false. ADR-0011 to ADR-0019 supersede or extend them. The originals are kept because the reasoning that was wrong is worth reading next to the reasoning that replaced it.
+ADR-0001 to ADR-0010 were written during the design freeze of 2026-09-14. A review on 2026-09-15, checking the design against provider source code and against the stack it will actually run on, found that several of them rested on assumptions that turned out to be false. ADR-0011 to ADR-0024 supersede or extend them, the last five of those written against responses captured from the live stack. The originals are kept because the reasoning that was wrong is worth reading next to the reasoning that replaced it.
+
+ADR-0025 to ADR-0027 were raised at the start of M1, when implementing the design surfaced three things it did not settle. Read this file from the bottom: a later entry always wins over an earlier one.
 
 ## ADR-0001: Tech stack
 
@@ -279,7 +281,7 @@ Three further gaps: the model had no revalidation rule, so a renamed, deleted or
 
 ## ADR-0014: Provider write paths as they actually are
 
-**Status: Accepted (2026-09-15).** Needed for M1.
+**Status: Accepted (2026-09-15).** Corrected the same day by [ADR-0021](#adr-0021-corrections-from-the-captured-responses) on two response shapes, and by [ADR-0025](#adr-0025-health-reads-the-write-probe-is-a-separate-step) on where the write probe runs. Needed for M1.
 
 **Context.** The provider notes in `ARCHITECTURE.md` were written from memory. Verification against Nextcloud `stable34` and Immich v3.2.0 (spec `v3.2.1`) contradicted several of them, and two are blocking.
 
@@ -326,7 +328,7 @@ The remedy is not code: leave `oidc_login_default_quota` empty and set the insta
 
 ## ADR-0016: Safety model: unknown state, re-check, and honest partial application
 
-**Status: Accepted (2026-09-15).** Extends [ADR-0009](#adr-0009-guardrail-against-shrinking-a-quota-below-current-usage). Needed for M3.
+**Status: Accepted (2026-09-15).** Extends [ADR-0009](#adr-0009-guardrail-against-shrinking-a-quota-below-current-usage). Needed for M3. The clause below that makes a missing login timestamp unknown is superseded by [ADR-0024](#adr-0024-a-person-who-has-never-logged-in-still-gets-their-quota): a complete quota object with `firstLoginTimestamp` of 0 is known and zero.
 
 **Context.** ADR-0009's guardrail is sound but has three holes, and provider verification made two of them concrete.
 
@@ -418,7 +420,7 @@ Per-provider resolution from ADR-0012 is unchanged: the input to the max is the 
 
 ## ADR-0021: Corrections from the captured responses
 
-**Status: Accepted (2026-09-15).** Corrects [ADR-0014](#adr-0014-provider-write-paths-as-they-actually-are) where the captures disagree with it. Needed for M1.
+**Status: Accepted (2026-09-15).** Corrects [ADR-0014](#adr-0014-provider-write-paths-as-they-actually-are) where the captures disagree with it. Needed for M1. Point 4 below is superseded by [ADR-0024](#adr-0024-a-person-who-has-never-logged-in-still-gets-their-quota) on the `firstLoginTimestamp` case; the rest stands.
 
 **Context.** ADR-0014 was written from upstream source and was right about behaviour, but wrong about two shapes and silent on two thresholds. The fixtures recorded on 2026-09-15 settle all four. A captured response outranks a reading of the source, and both outrank prose.
 
@@ -448,7 +450,7 @@ It does not replace directory matching, and the distinction matters. The subject
 
 ## ADR-0022: What the usage endpoint means before policy exists
 
-**Status: Accepted (2026-09-15).** Needed for M1.
+**Status: Accepted (2026-09-15).** Extended by [ADR-0026](#adr-0026-the-usage-contract-needs-a-name-for-unknown), which adds the missing representation for unknown. Needed for M1.
 
 **Context.** `/api/v1/usage` ships in M1 and its shape is explicitly a frozen contract, because a dashboard widget will depend on it. But half its fields describe policy: `budget_bytes`, `managed`, and a `quota_bytes` that is ambiguous between the observed ceiling and the desired one. In M1 there are no tiers, no allocations and no resolver. Freezing a contract whose fields have no defined meaning yet is how a v2 endpoint gets born three weeks later. There is also no way to mint the admin key the endpoint requires: the only issuance path in the spec is a UI that arrives later.
 
@@ -463,7 +465,7 @@ It does not replace directory matching, and the distinction matters. The subject
 
 ## ADR-0023: Nuno diagnoses, it does not reconfigure the services it manages
 
-**Status: Accepted (2026-09-15).** Needed for M1.
+**Status: Accepted (2026-09-15).** Extended by [ADR-0027](#adr-0027-a-competing-writer-nuno-cannot-see), which bounds what FR-75 can detect and turns the printed remedy into an emitted script. Needed for M1.
 
 **Context.** [ADR-0014](#adr-0014-provider-write-paths-as-they-actually-are) established that `oidc_login_default_quota` rewrites a user's quota on every login and must be moved to `files/default_quota` before Nuno can manage Nextcloud. The remedy was written as a manual precondition, which raises a fair question: a quota setting is Nuno's domain, so why is fixing it the operator's job?
 
@@ -508,3 +510,91 @@ A never-logged-in account is therefore fully writable. It cannot be a `shrink-be
 - The residual risk is a file placed under a user's home by an administrator out of band, before that user's first login. It is rare, it is visible in the plan, and treating it as a reason to never provision anyone would trade the main flow for a corner.
 - `nuno doctor` and the plan both show a never-logged-in account as such, so the zero is never mistaken for a measurement.
 - Immich needs no equivalent rule: an account with no assets legitimately reports zero, and there is no filesystem to initialize.
+
+## ADR-0025: Health reads, the write probe is a separate step
+
+**Status: Accepted (2026-09-15).** Raised at the start of M1. Corrects the probe placement in [ADR-0014](#adr-0014-provider-write-paths-as-they-actually-are) and changes the `Provider` interface in `ARCHITECTURE.md` section 2.
+
+**Context.** ADR-0014 puts the write probe inside `Health()`: "setting one user's quota to its current value, so a misconfiguration surfaces at startup rather than in the middle of a reconcile". The reason for the probe is sound and is not in question. Its placement is, for three independent reasons.
+
+`Health()` runs before `link()`. FR-7 says Nuno must not write to an account it cannot link, and the README states it as an invariant: "Nuno never writes to an account it has not linked". At probe time no link exists yet. On a fresh instance the only account certain to be present is the local admin, which in `tests/fixtures/nextcloud-users-details.json` has `email: null` and therefore never matches under the ADR-0013 match keys: the probe would write to precisely the account Nuno has decided not to manage.
+
+The probe also spends the write rate limit, 50 calls per 10 minutes on `editUser`, from the same budget as the applier. `Health()` is what feeds FR-53, the provider status in the UI. If provider status is recomputed per page load, Nuno throttles itself and degrades its own provider. One `CanWrite bool` for a read that costs nothing and a write that costs a rate-limited call is the wrong shape, and `bool` cannot say "not proven".
+
+Third, the rewritten value is a fixed point of normalization only because what Nuno read is already the image of a previous `humanFileSize` round trip. A quota set outside OCS, through `occ` or in the database, never passed `parseAndValidateQuota`, so rewriting it silently changes a person's quota during a startup the roadmap calls read only.
+
+**Options.**
+1. Keep the probe in `Health()`, constrain the target and cache the result.
+2. Move the probe out of `Health()` into an explicit step that runs after linking.
+3. Drop the probe from v0.1.
+
+**Decision.** Option 2.
+
+`Health()` performs reads only: reachability, version, whether the credential authenticates. It has no effect on provider state and may be called as often as the UI needs. It does not read user details, so the home-folder side effect from ADR-0014 stays confined to `observe()`.
+
+The write probe becomes a separate operation, run by `nuno doctor` and once at startup after `observe()` and `link()`. Its target is a linked account, chosen deterministically by external id, whose observed quota satisfies `NormalizeQuota(q) == q`. It writes that value back and reads it again, and the probe passes only if the value is unchanged. With no eligible account the probe does not run and write access stays `Unproven`.
+
+`HealthResult` loses `CanWrite` entirely, because a method with no memory cannot report the outcome of a step that runs later. Write access becomes a tri-state of its own, `Unproven`, `Yes` or `No`, produced by the probe and persisted with the provider instance. `Unproven` is the honest default and the value on a fresh install. The probe needs no new method on the interface: it is `GetAccount`, `SetQuota` with the observed value, `GetAccount` again, sequenced in `internal/reconcile` where I/O orchestration belongs.
+
+**Consequences.**
+- The invariant holds without an exception: every write Nuno makes, probe included, addresses a linked account.
+- A fresh instance reports write access as `Unproven` rather than as a failure, and `nuno doctor` names `nuno link` as the command that makes the probe possible. A provider that has never proven a write is not the same thing as one that has proven it cannot.
+- One probe per startup instead of one per status query, so the write budget stays with the applier.
+- An account whose quota is not a fixed point is never a probe target, so the probe cannot alter anyone's quota. That account is worth reporting for a different reason: something wrote it outside OCS, and the first reconcile will show it as a change. `nuno doctor` lists it.
+- Immich follows the same shape. Its no-op write must emit `quotaSizeInBytes` explicitly, and an explicit `null` for an unlimited account, never an omitted key, per the hazard in [ADR-0011](#adr-0011-quota-is-a-tagged-value-not-a-nullable-integer).
+- FR-76 and `ARCHITECTURE.md` section 2 are updated to match. ADR-0014 stands on everything else: the probe is necessary, it is just not part of a health read.
+
+## ADR-0026: The usage contract needs a name for unknown
+
+**Status: Accepted (2026-09-15).** Raised at the start of M1. Extends [ADR-0022](#adr-0022-what-the-usage-endpoint-means-before-policy-exists) and corrects FR-47.
+
+**Context.** FR-47 fixes `null` as unlimited, and ADR-0022 fixes `status` at `ok`, `stale` and `unavailable`, with `budget_bytes` as the sum of observed ceilings. Between them there is no representation for `Unknown`, which the rest of the design treats as a first-class value ([ADR-0011](#adr-0011-quota-is-a-tagged-value-not-a-nullable-integer), [ADR-0016](#adr-0016-safety-model-unknown-state-re-check-and-honest-partial-application)).
+
+The gap is not hypothetical. Nextcloud answers HTTP 200 with the quota object serialized as `[]`, so `quota.quota` is absent and the ceiling is `Unknown`, while the call succeeded and `observed_at` is fresh. Serialized under the frozen contract that is `quota_bytes: null` with `status: "ok"`, which reads as "unlimited" for an account whose storage could not be read, and it propagates to `budget_bytes: null` for the whole person. The consumer is a Homepage `customapi` widget that addresses fields by path, so it has no way to tell the two apart. The contract is declared frozen in M1, which means this has to be settled before anything consumes it, not after.
+
+**Options.**
+1. A fourth `status` value, with the numeric fields null and readable only together with `status`.
+2. Treat an incomplete read as a failed observe for that account: `ObserveOK` false, `status: "unavailable"`, serve the last known values.
+3. A reserved numeric sentinel distinct from null.
+
+**Decision.** Option 1.
+
+- Per-provider `status` takes a fourth value, `unknown`: the call succeeded, the values did not. It stays distinct from `unavailable`, which means the last observe failed.
+- When `status` is `unavailable` or `unknown`, `quota_bytes`, `used_bytes` and `used_percent` are `null`. `null` means unlimited only when `status` is `ok` or `stale`. A consumer must read `status` before reading a number.
+- The user entry gains `"complete": bool`. It is false when at least one of that person's providers contributed no ceiling or no usage. `budget_bytes` and the user-level `used_bytes` are the sum of the known values, never null because of an unknown: `null` at that level stays reserved for unlimited.
+
+Option 2 is tempting because degrading an account needs no new field, but it fails on the first observe, when there are no last known values to serve, and it labels a working provider unavailable.
+
+**Consequences.**
+- FR-47 gains `unknown` and `complete`. The shape still does not change when policy arrives in M2, which is what ADR-0022 was protecting.
+- The documented Homepage snippet in M4 reads `status` and `complete`, not just the numbers. A widget that ignores them shows a wrong value, so the snippet is part of the contract rather than an illustration.
+- A never-logged-in account is not `unknown`. Under [ADR-0024](#adr-0024-a-person-who-has-never-logged-in-still-gets-their-quota) its usage is known and zero, and its status is `ok`.
+- `unavailable` and `unknown` stay separate because they call for different actions: one is a credential or the network, the other is that account's storage on the provider.
+- `managed` is untouched and stays false everywhere until M2.
+
+## ADR-0027: A competing writer Nuno cannot see
+
+**Status: Accepted (2026-09-15).** Raised at the start of M1. Bounds FR-75 and extends the remedy in [ADR-0023](#adr-0023-nuno-diagnoses-it-does-not-reconfigure-the-services-it-manages).
+
+**Context.** FR-75 requires an adapter to detect a known competing writer at startup, naming three on Nextcloud: `oidc_login_default_quota`, `ldapQuotaAttribute` and `ldapQuotaDefault`. ADR-0023 establishes, as a verified fact, that the first is a Nextcloud *system* config and that "the OCS API exposes app config but not system config". So the adapter cannot read the one writer that does the most damage, the one that rewrites a quota on every OIDC login. ADR-0014 half admits it with "documented preconditions and startup checks where detectable", which is not a rule anyone can implement.
+
+It is live, not theoretical: `tests/fixtures/nextcloud-write-probe.json` records `oidc_login_default_quota` set to `"25 GB"` on the target instance. The condition FR-75 exists to catch is present today and is invisible to the check that is supposed to catch it.
+
+**Options.**
+1. Require the operator to declare in configuration that the default was moved, and keep the provider degraded while the declaration is absent.
+2. Diagnose without a gate: `nuno doctor` emits the commands, including the one that reads the value Nuno cannot read.
+3. Persist the operator's pasted `occ` output as adapter state.
+
+**Decision.** Option 2 for M1.
+
+`nuno doctor` composes the remedy with the real values it can read and emits it as a runnable script (`nuno doctor --fix`), which the operator executes. The script performs the check the API does not allow and applies the fix. Nuno does not run `occ`, does not mount the Docker socket and has no access to the Nextcloud container, so ADR-0023's boundary and NFR-7 hold unchanged. Composing the commands is work Nuno can do; executing them is not work Nuno is entitled to do.
+
+`ldapQuotaAttribute` and `ldapQuotaDefault` are app config, so they are reachable through the provisioning API's appconfig endpoint, and for those two FR-75 is implemented as written. That the endpoint exposes them on `stable34` is to be confirmed in the first adapter commit, not assumed.
+
+For `oidc_login_default_quota` there is no detection. In M1 that has no observable consequence, because M1 applies nothing. Whether the apply gate can rest on something other than detection is a question for M3, when the applier exists and the instance has been through a week of use.
+
+**Consequences.**
+- FR-75 is reworded to say which of the three writers are detectable and which is not. A MUST nobody can implement is worse than a MUST with a stated perimeter, because it reads as done.
+- `nuno doctor` has two modes: report, and `--fix` which emits a script. It never executes one.
+- The precondition already in `ROADMAP.md` gains the script, and the deployment docs in M4 carry it.
+- The general rule, for providers not yet written: when a service does not expose the state a precondition depends on, Nuno emits the command that exposes it and does not pretend to know. Diagnosis degrades honestly; it does not guess.
