@@ -1,0 +1,10 @@
+{
+  "nightlyTasks": {
+    "startTime": "00:00",
+    "databaseCleanup": true,
+    "missingThumbnails": true,
+    "clusterNewFaces": true,
+    "generateMemories": true,
+    "syncQuotaUsage": true
+  }
+}

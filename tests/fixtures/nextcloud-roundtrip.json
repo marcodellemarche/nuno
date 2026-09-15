@@ -1,0 +1,35 @@
+{
+  "test": "T3 - does Nextcloud return the exact byte value written?",
+  "target_user": "11111111-1111-4111-8111-111111111111",
+  "executed_with": "admin real password (basic auth)",
+  "note": "T1 showed the app-password path returns 403 Password confirmation is required, so the write was executed through the only working OCS credential on this instance.",
+  "original_quota_bytes": 53687091200,
+  "written_bytes": 26844594176,
+  "read_back_bytes": 26843545600,
+  "restored_bytes": 53687091200,
+  "restore_verified": true,
+  "write_response": {
+    "http_status": 200,
+    "ocs_meta": {
+      "status": "ok",
+      "statuscode": 200,
+      "message": "OK"
+    },
+    "data": []
+  },
+  "restore_response": {
+    "http_status": 200,
+    "ocs_meta": {
+      "status": "ok",
+      "statuscode": 200,
+      "message": "OK"
+    },
+    "data": []
+  },
+  "humanFileSize_transform_observed_in_container": {
+    "26844594176": "25 GB",
+    "53687091200": "50 GB",
+    "161061273600": "150 GB"
+  },
+  "explanation": "parseAndValidateQuota() in apps/provisioning_api/lib/Controller/UsersController.php calls Util::humanFileSize($bytes) and stores the resulting human string. On read, the string is converted back to bytes, so 26844594176 becomes 25 GB -> 26843545600."
+}

@@ -1,10 +1,10 @@
 # Nuno
 
-> Status: pre-alpha / design. Nothing is implemented yet. This repository holds the specification we intend to build against.
+> Status: pre-alpha. The design is frozen and every decision is recorded, but nothing is implemented yet. This repository holds the specification we build against.
 
 Nuno is a quota and usage control plane for self-hosted service stacks.
 
-Self-hosters run several services that store user data (Nextcloud, Immich, Seafile, S3 buckets, ZFS datasets) and each one counts storage on its own. There is no single place to answer "how much space is this person using across everything?" or to say "this person gets 100 GB, split across the services that support quotas." Nuno fills that gap.
+Self-hosters run several services that store user data (Nextcloud, Immich, Seafile, S3 buckets, ZFS datasets) and each one counts storage on its own. There is no single place to answer "how much space is this person using across everything?" or to say "this person gets 100 GiB, split across the services that support quotas." Nuno fills that gap.
 
 It connects to an identity provider (LLDAP or any LDAP directory), reads and writes per-user quotas on each supported service, aggregates usage into one view, and gives you an admin UI to see and change it. It runs as a small container next to the services it manages.
 
@@ -12,19 +12,19 @@ It connects to an identity provider (LLDAP or any LDAP directory), reads and wri
 
 - Every service enforces its own quota, if it supports one at all.
 - "Budget per person" is a human convention, not something the stack enforces.
-- SSO provisions new users with inconsistent defaults: Nextcloud has one, Immich does not.
+- SSO gets quotas wrong in both directions at once. Immich's OIDC `storageQuotaClaim` is applied **only when the account is created** and never re-synced, so changing someone's entitlement in the directory does nothing. Nextcloud's `oidc_login_default_quota` does the opposite: it rewrites the quota on **every** login, so a value an admin set by hand quietly reverts. One mechanism never updates, the other never stops.
 - Answering "who is using what" means opening N admin panels.
 - Promoting someone to a bigger tier means remembering to touch every service, in the right way, with the right API.
 
 ## The idea
 
-```
+```text
                  +------------------------------+
                  |             Nuno             |
                  |                              |
   LLDAP -------->|  Identity   Policies  Usage  |
-  (users,        |   sync      (desired)  view   |
-   groups)       |        +------+-------+       |
+  (users,        |   sync      (desired)  view  |
+   groups)       |        +------+-------+      |
                  |          reconciler          |
                  +-------+--------------+-------+
                          |              |
@@ -36,7 +36,7 @@ It connects to an identity provider (LLDAP or any LDAP directory), reads and wri
 1. Identity sync pulls people and groups from LLDAP/LDAP.
 2. Policies map a person or a group to a storage budget and to how that budget is split across services.
 3. A reconciler compares the desired state with what each service actually has and applies the difference, idempotently, with a dry-run mode and an audit log.
-4. Usage from every provider is aggregated into one dashboard and history.
+4. Usage from every provider is aggregated into one dashboard and history, and each person can read their own share of it from a homepage widget.
 
 ## Core concepts
 
@@ -48,6 +48,7 @@ It connects to an identity provider (LLDAP or any LDAP directory), reads and wri
 | Allocation | How a budget is split onto a provider, for example 25% Nextcloud and 75% Immich. |
 | Desired state | The quota Nuno wants each provider to have for a user. Stored in Nuno's database. |
 | Observed state | What the provider reports right now (quota and usage). |
+| Account link | The mapping between a person and their account on a provider. Nuno never writes to an account it has not linked. |
 | Reconcile | Compute desired vs observed and apply the difference. |
 
 ## Planned features
@@ -58,13 +59,14 @@ It connects to an identity provider (LLDAP or any LDAP directory), reads and wri
 - [ ] Identity: LLDAP / generic LDAP (read users and groups), plus manual users.
 - [ ] Read usage per user per provider, aggregated in one view.
 - [ ] Policies: default tier, per-group tiers, per-user overrides.
-- [ ] Manual reconcile (button and CLI) with dry-run and audit log.
+- [ ] Manual reconcile (button and CLI) with dry-run, audit log, and guardrails: never shrink a quota to or below what someone already stores without explicit consent, and never write against state that could not be read.
 - [ ] Admin UI: list users, usage bars, edit budget, trigger reconcile.
-- [ ] Notifications on reconcile result and on quota thresholds, via Apprise (ntfy, email, webhook, ...).
+- [ ] A JSON usage endpoint for a shared homepage dashboard, so people see what is left without opening two admin panels.
+- [ ] Webhook notification when a reconcile fails or is blocked.
 
 ### Later
 
-- [ ] Scheduled automatic reconcile.
+- [ ] A per-person endpoint and token, for stacks with non-admin members.
 - [ ] More providers: S3/MinIO buckets, ZFS userquota, Seafile.
 - [ ] Claim-based provisioning at login (push quota through OIDC).
 - [ ] Prometheus metrics and a Grafana dashboard.
@@ -76,8 +78,9 @@ It connects to an identity provider (LLDAP or any LDAP directory), reads and wri
 ## Non-goals
 
 - Nuno is not a file server, a backup tool, or a storage layer. It sets quotas and reads usage; the data stays in the services.
-- Nuno is not an identity provider. It consumes identity from LLDAP/LDAP.
+- Nuno is not an identity provider. It consumes identity from LLDAP/LDAP. The member token is a read-only capability key, not a login.
 - Nuno does not move data between services.
+- Nuno does not create or delete accounts. A person with no account on a provider is reported, never provisioned.
 
 ## Documentation
 
@@ -105,12 +108,24 @@ services:
     restart: unless-stopped
 ```
 
-It is meant to sit behind the same SSO or forward-auth layer as the rest of the stack. Nuno does not implement login in the MVP.
+It binds to localhost unless told otherwise and is meant to sit behind the same SSO or forward-auth layer as the rest of the stack. A static admin credential is supported so an unproxied deployment is never an unauthenticated one. Nuno does not implement login in the MVP.
+
+Nuno needs credentials that can actually write. On Nextcloud an app password is not enough: quota changes require `allowed_no_password_confirmation_ranges` or a dedicated admin without 2FA. On Immich an API key scoped to `adminUser.read` and `adminUser.update` is enough. Nuno proves this at startup with a write probe instead of discovering it mid-reconcile.
 
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`AGENTS.md`](AGENTS.md). Issues and pull requests are welcome once the design stabilizes.
 
+## Known to work with
+
+| Component | Verified against |
+|---|---|
+| Nextcloud | 34.0.4 (OCS Provisioning API) |
+| Immich | v3.2.0 (admin API, major v3) |
+| LLDAP | v0.6.3 |
+
+Nuno detects each provider's version and warns outside the supported major. It does not refuse to run on an untested minor.
+
 ## License
 
-TBD, see [ADR-0004](docs/decisions.md#adr-0004-license). Working proposal: AGPL-3.0-or-later, to match the Nextcloud ecosystem.
+AGPL-3.0-or-later, to match the Nextcloud ecosystem and keep network forks open. See [ADR-0004](docs/decisions.md#adr-0004-license).

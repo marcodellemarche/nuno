@@ -1,0 +1,107 @@
+{
+  "ocs": {
+    "meta": {
+      "status": "ok",
+      "statuscode": 200,
+      "message": "OK"
+    },
+    "data": {
+      "users": {
+        "11111111-1111-4111-8111-111111111111": {
+          "enabled": true,
+          "storageLocation": "/var/www/html/data/11111111-1111-4111-8111-111111111111",
+          "id": "11111111-1111-4111-8111-111111111111",
+          "firstLoginTimestamp": 1789301106,
+          "lastLoginTimestamp": 1789415285,
+          "lastLogin": 1789415285000,
+          "backend": "Database",
+          "subadmin": [],
+          "quota": {
+            "free": 53592668649,
+            "used": 94422551,
+            "total": 53687091200,
+            "relative": 0.18,
+            "quota": 53687091200
+          },
+          "manager": "",
+          "email": "alice@example.org",
+          "additional_mail": [],
+          "displayname": "Alice",
+          "display-name": "Alice",
+          "phone": "",
+          "address": "",
+          "website": "",
+          "twitter": "",
+          "bluesky": "",
+          "fediverse": "",
+          "organisation": "",
+          "role": "",
+          "headline": "",
+          "biography": "",
+          "profile_enabled": "1",
+          "pronouns": "",
+          "groups": [],
+          "language": "it",
+          "locale": "",
+          "timezone": "",
+          "notify_email": null,
+          "backendCapabilities": {
+            "setDisplayName": true,
+            "setPassword": true
+          }
+        },
+        "admin": {
+          "enabled": true,
+          "storageLocation": "/var/www/html/data/admin",
+          "id": "admin",
+          "firstLoginTimestamp": 1789296679,
+          "lastLoginTimestamp": 1789423756,
+          "lastLogin": 1789423756000,
+          "backend": "Database",
+          "subadmin": [],
+          "quota": {
+            "free": -3,
+            "used": 65575770,
+            "total": -3,
+            "relative": 0,
+            "quota": -3
+          },
+          "manager": "",
+          "email": null,
+          "additional_mail": [],
+          "displayname": "admin",
+          "display-name": "admin",
+          "phone": "",
+          "address": "",
+          "website": "",
+          "twitter": "",
+          "bluesky": "",
+          "fediverse": "",
+          "organisation": "",
+          "role": "",
+          "headline": "",
+          "biography": "",
+          "profile_enabled": "1",
+          "pronouns": "",
+          "groups": [
+            "admin"
+          ],
+          "language": "en",
+          "locale": "",
+          "timezone": "",
+          "notify_email": null,
+          "backendCapabilities": {
+            "setDisplayName": true,
+            "setPassword": true
+          }
+        }
+      },
+      "groups": [
+        {
+          "id": "admin",
+          "displayname": "admin"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "photos": 4465,
+  "videos": 564,
+  "usage": 45826091484,
+  "usagePhotos": 12344757192,
+  "usageVideos": 33481334292,
+  "usageByUser": [
+    {
+      "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "userName": "Alice",
+      "photos": 1194,
+      "videos": 175,
+      "usage": 9855362014,
+      "usagePhotos": 4139510363,
+      "usageVideos": 5715851651,
+      "quotaSizeInBytes": 161061273600
+    },
+    {
+      "userId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "userName": "Bob",
+      "photos": 3271,
+      "videos": 389,
+      "usage": 35970729470,
+      "usagePhotos": 8205246829,
+      "usageVideos": 27765482641,
+      "quotaSizeInBytes": 161061273600
+    }
+  ]
+}

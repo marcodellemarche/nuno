@@ -1,0 +1,42 @@
+[
+  {
+    "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    "email": "bob@example.org",
+    "name": "Bob",
+    "profileImagePath": "",
+    "avatarColor": "gray",
+    "profileChangedAt": "2026-09-13T07:30:06.241Z",
+    "clusterGroupId": "e14da525-2fbc-4ff4-bd33-b34af49884bc",
+    "storageLabel": null,
+    "shouldChangePassword": true,
+    "isAdmin": true,
+    "createdAt": "2026-09-13T07:30:06.241Z",
+    "deletedAt": null,
+    "updatedAt": "2026-09-14T22:00:00.590Z",
+    "oauthId": "22222222-2222-4222-8222-222222222222",
+    "quotaSizeInBytes": 161061273600,
+    "quotaUsageInBytes": 35970729470,
+    "status": "active",
+    "license": null
+  },
+  {
+    "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "email": "alice@example.org",
+    "name": "Alice",
+    "profileImagePath": "",
+    "avatarColor": "orange",
+    "profileChangedAt": "2026-09-12T16:55:34.566Z",
+    "clusterGroupId": "8b7575eb-72a5-4f23-8bcb-414de5772067",
+    "storageLabel": "admin",
+    "shouldChangePassword": true,
+    "isAdmin": true,
+    "createdAt": "2026-09-12T16:55:34.566Z",
+    "deletedAt": null,
+    "updatedAt": "2026-09-14T22:00:00.586Z",
+    "oauthId": "11111111-1111-4111-8111-111111111111",
+    "quotaSizeInBytes": 161061273600,
+    "quotaUsageInBytes": 9864872002,
+    "status": "active",
+    "license": null
+  }
+]

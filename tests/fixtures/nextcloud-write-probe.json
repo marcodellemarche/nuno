@@ -1,0 +1,40 @@
+{
+  "test": "T1 - can an app password write a Nextcloud quota?",
+  "endpoint": "PUT /ocs/v2.php/cloud/users/{id}",
+  "target_user": "11111111-1111-4111-8111-111111111111",
+  "request": {
+    "key": "quota",
+    "value": 53687091200,
+    "headers": {
+      "OCS-APIRequest": "true",
+      "Accept": "application/json"
+    },
+    "note": "no-op: value is the target user's current quota"
+  },
+  "probes": [
+    {
+      "auth": "app password (Nextcloud authtoken type=1, uid=admin, name=homepage)",
+      "http_status": 403,
+      "ocs_meta": {
+        "status": "failure",
+        "statuscode": 403,
+        "message": "Password confirmation is required"
+      },
+      "data": []
+    },
+    {
+      "auth": "admin real password (basic auth)",
+      "http_status": 200,
+      "ocs_meta": {
+        "status": "ok",
+        "statuscode": 200,
+        "message": "OK"
+      },
+      "data": []
+    }
+  ],
+  "nextcloud_config": {
+    "allowed_no_password_confirmation_ranges": "absent (key not present in config.php)",
+    "oidc_login_default_quota": "25 GB"
+  }
+}

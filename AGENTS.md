@@ -4,16 +4,18 @@ This file is for AI coding agents, and for humans who want the same rules. Read 
 
 ## Where we are
 
-Nuno is at M0, design freeze. There is no implementation yet. Do not start a large implementation until the open ADRs in [`docs/decisions.md`](docs/decisions.md) that your work depends on are resolved. When in doubt, ask before coding.
+M0 closed on 2026-09-15, after a review that superseded six of the original ten decisions. There is still no implementation, so the next work is M1 in [`ROADMAP.md`](ROADMAP.md). Read `docs/decisions.md` from the bottom: ADR-0011 to ADR-0019 override the earlier ones where they conflict, and the superseded entries carry a pointer at the top. Reopening a decision means a new ADR, not an edit.
+
+If the spec does not cover a case you hit, do not stall and do not guess silently. Implement the most conservative behavior available, leave a `TODO(spec):` comment naming the gap, and list it under "Spec gaps found" in the pull request. That turns an invisible guess into a reviewable line.
 
 ## The rules
 
 1. The spec is the source of truth. `REQUIREMENTS.md` defines what, `ARCHITECTURE.md` defines how. If you think the spec is wrong, change the spec first, with an ADR if it is architectural, then the code.
 2. Never invent scope. Features marked Later or Won't are not part of the current milestone. Do not add them while you are in the area.
 3. Small, runnable milestones. Follow [`ROADMAP.md`](ROADMAP.md). Each milestone ends with something demonstrable.
-4. Core has no I/O. Domain logic must not import provider, store or web code. This keeps the system testable and providers pluggable.
+4. Core has no I/O. `internal/core` holds the model, the pure functions and the port interfaces, and imports no other internal package; CI checks this. Orchestration that sequences I/O lives in `internal/reconcile`.
 5. Providers declare capabilities, they do not assume them. Never call an optional API without checking the capability flag.
-6. Fail loud. No silent skips. A failed provider call fails the reconcile and is reported. A backup that fails silently is worse than no backup.
+6. Fail loud. No silent skips. A failed provider call stops the run for that provider and is reported, with honest applied/failed/skipped/guarded counts: never claim nothing happened when writes already landed. The sanctioned exceptions are the guardrails (ADR-0009, ADR-0016), and they are not silent.
 7. Secrets never touch git, the database or logs. Redact provider credentials everywhere.
 8. Idempotency is a tested property, not a hope. Plan, apply, plan again must produce an empty second plan.
 9. Document decisions. Non-trivial choices go in `docs/decisions.md` with context and alternatives, not just the outcome. Open decisions stay open until explicitly accepted. Do not silently pick one.
@@ -36,7 +38,7 @@ The goal is code and prose that read like a careful human wrote them. Reviewers 
 
 - Language: code, comments, commit messages, docs and issues in English.
 - Commits: imperative subject, explain why in the body only when non-obvious.
-- Tests: every provider adapter needs contract tests against recorded fixtures. Domain logic needs unit tests. See ARCHITECTURE section 9.
+- Tests: every provider adapter needs contract tests against recorded fixtures. Domain logic needs unit tests. See ARCHITECTURE section 10.
 - Dependencies: prefer the standard library and well-maintained packages. Justify anything heavy in the PR.
 - Config: file or env based, documented in `.env.example`. No interactive setup.
 
@@ -46,12 +48,12 @@ The goal is code and prose that read like a careful human wrote them. Reviewers 
 - Tests cover the new behavior, unit and/or contract.
 - The dry-run path is considered and correct for anything that writes.
 - No secrets in code, logs or fixtures.
-- Docs updated, including the provider matrix in the README and any ADR.
-- `go vet` and `go test ./...` pass locally.
+- Docs updated, including the "known to work with" line in the README and any ADR.
+- `go vet` and `go test ./...` pass locally. Integration tests are tagged `//go:build integration` and are not part of that run.
 
 ## Repository layout
 
-```
+```text
 nuno/
 ├── README.md
 ├── REQUIREMENTS.md
@@ -61,11 +63,12 @@ nuno/
 ├── docs/decisions.md
 ├── cmd/nuno/            # main, wiring
 ├── internal/
-│   ├── core/            # domain: model, policy, planner, applier
+│   ├── core/            # domain: model, ports, pure resolve/diff/classify
+│   ├── reconcile/       # observe, link, plan, apply, report (owns the I/O)
 │   ├── providers/       # nextcloud/, immich/, ... one package each
 │   ├── identity/        # ldap/, manual/
 │   ├── store/           # sqlite repositories and migrations
-│   ├── notify/          # apprise or direct channels
+│   ├── notify/          # outbound webhook
 │   ├── api/             # HTTP API
 │   └── ui/              # html/template plus static assets
 ├── tests/

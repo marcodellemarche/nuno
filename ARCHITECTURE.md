@@ -1,6 +1,6 @@
 # Architecture
 
-> Design document. Nothing here is implemented yet. Decisions still open are marked **[OPEN]** and tracked in [`docs/decisions.md`](docs/decisions.md).
+> Design document. Nothing here is implemented yet. Every decision it rests on is recorded in [`docs/decisions.md`](docs/decisions.md). Changing something here means writing an ADR first.
 
 ## 1. Shape of the system
 
@@ -25,7 +25,7 @@ Nuno is a control plane: it holds a desired state, observes the world, and recon
 |                                    |                                |
 |  +------------+   +------------+   |   +----------------------+     |
 |  |  Admin UI  |   |  HTTP API  |   |   | Notifications        |     |
-|  |  (HTMX)    |-->| (net/http) |   |   | (Apprise)            |     |
+|  |  (HTMX)    |-->| (net/http) |   |   | (webhook)            |     |
 |  +------------+   +------------+   |   +----------------------+     |
 +------------------------------------+-------------------------------+
                                      v
@@ -38,19 +38,20 @@ Nuno is a control plane: it holds a desired state, observes the world, and recon
 
 Dependency direction is outer to inner, never the reverse.
 
-- `internal/providers/`: adapters to services. Depends only on core interfaces.
-- `internal/identity/`: adapters to identity sources (LDAP). Depends only on core.
-- `internal/core/`: domain model, policy resolution, planner, applier. No I/O.
+- `internal/core/`: the domain model, the port interfaces (`Provider`, repositories, typed errors), and the pure functions `Resolve`, `Diff` and `Classify`. No I/O.
+- `internal/reconcile/`: the orchestration. Observe, link, plan, apply, report. It sequences I/O, owns contexts, deadlines, retries, pacing and per-provider degradation. It may do I/O; it holds no domain rules.
+- `internal/providers/`: adapters to services. Depend only on core.
+- `internal/identity/`: adapters to identity sources (LDAP). Depend only on core.
 - `internal/store/`: persistence. Implements core repositories.
-- `internal/api/` and `internal/ui/`: HTTP surface. Depends on core and store.
-- `internal/notify/`: channel abstraction.
+- `internal/api/` and `internal/ui/`: HTTP surface. Depends on core, store and reconcile.
+- `internal/notify/`: webhook delivery.
 - `cmd/nuno/`: wiring, the composition root.
 
-The rule: core must not import any provider, store, or web package. This is what makes providers pluggable and the domain testable without a network.
+The rule "core has no I/O" is only meaningful with the core/reconcile split above. The applier calls providers and writes audit entries, which is I/O sequencing, so it lives in `reconcile`. Without this split, the first retry added to the applier quietly voids the rule. The split is mechanically checkable and CI checks it: `internal/core` may not import any other `internal` package.
 
 ## 2. The provider interface
 
-Every provider declares what it can do, so the core never guesses. In Go:
+Every provider declares what it can do, so the core never guesses.
 
 ```go
 type Provider interface {
@@ -58,156 +59,342 @@ type Provider interface {
     Capabilities() Capabilities
     Health(ctx context.Context) HealthResult
 
-    ListUsers(ctx context.Context) ([]ExternalUser, error)
-    GetAccount(ctx context.Context, user ExternalUser) (Account, error)
+    ListAccounts(ctx context.Context) ([]Account, error)
+    GetAccount(ctx context.Context, externalID string) (Account, error)
+    NormalizeQuota(q Quota) Quota
 
-    SetQuota(ctx context.Context, user ExternalUser, bytes *int64) error
-    SetDefaultQuota(ctx context.Context, bytes *int64) error
+    SetQuota(ctx context.Context, externalID string, q Quota) error
 }
 
 type Capabilities struct {
     CanReadUsers       bool
     CanReadUsage       bool
     CanSetUserQuota    bool
-    CanSetDefaultQuota bool
-    HasGroups          bool
-    QuotaIsBytes       bool
+    CanSetDefaultQuota bool // reserved for FR-24 (Later); false for Immich, which has no such concept
+    HasGroups          bool // reserved; group membership comes from the identity source
+    MatchKeys          []MatchKey // what this provider can match on, in preference order
+}
+
+type Account struct {
+    ExternalID string // the provider's stable key, and the only thing writes address
+    Subject    string // OIDC subject when the provider exposes one: an exact cross-provider join
+    Username   string // may be empty, may be a UUID, never assumed meaningful
+    Email      string // may be empty: a real captured account has none
+    Enabled    bool
+    Deleted    bool   // Immich soft-deletes; a deleted account is never linked or written
+    Quota      Quota  // the CONFIGURED quota, not the effective one
+    Used       Quota  // Unknown or Bytes only; never Unlimited
+    ObservedAt time.Time
+}
+
+type HealthResult struct {
+    Reachable   bool
+    Version     string
+    InSupported bool
+    CanWrite    bool // result of an actual write probe, see ADR-0014
+    Err         error
 }
 ```
 
-`SetQuota` and `SetDefaultQuota` return `UnsupportedError` when the capability is false. Callers check the capability first; the error is a safety net, not control flow.
+Writes address `ExternalID` and nothing else. `Username` and `Email` exist to match an account to a person once; after that the link is stored, so a rename in the directory cannot retarget a write.
 
-Provider-specific rules live inside the adapter:
+`GetAccount` exists because the apply-time re-check needs one account, not all of them: re-listing on Nextcloud has side effects and does not scale. `MatchKeys` is what the adapter *can* do; which one is used is instance configuration, and the instance's choice wins.
 
-- Nextcloud: OCS Provisioning API. `GET /ocs/v2.php/cloud/users/details` returns `quota.used`, `quota.total` and `quota.relative` per user. `PUT /ocs/v2.php/cloud/users/{id}` with `key=quota&value=<bytes>` sets it. Auth is an admin user plus an app password, with header `OCS-APIRequest: true`. The API is stable.
-- Immich: `GET /api/admin/users` returns `quotaSizeInBytes` and `quotaUsageInBytes`. `PUT /api/admin/users/{id}` with `{"quotaSizeInBytes": N}` sets it. Auth is an admin API key in `x-api-key`. The API is explicitly unstable, see [ADR-0005](docs/decisions.md#adr-0005-provider-version-compatibility).
+`NormalizeQuota` returns what the provider will actually store when asked for a value. The planner compares normalized to observed, never raw to raw, because at least one provider silently rewrites what you give it. `NormalizeQuota(Unlimited)` is `Unlimited`; `NormalizeQuota(Unknown)` is a programming error. See [ADR-0011](docs/decisions.md#adr-0011-quota-is-a-tagged-value-not-a-nullable-integer).
 
-Adapters must not return generic errors. They return typed errors (`AuthError`, `UnreachableError`, `UnsupportedError`, `ProviderError`) so the reconciler can decide what is fatal and what is not.
+### Quota is four states, not a number
+
+```go
+type QuotaKind uint8 // Unknown, Unlimited, Bytes
+type Quota struct { Kind QuotaKind; Bytes int64 }
+```
+
+`Unknown` is never a write target and never a write trigger. All stored and transported values are bytes; all human-facing sizes are IEC.
+
+There is deliberately no `ProviderDefault` kind: no adapter can produce one honestly (Nextcloud resolves `default` before the API sees it, Immich has no instance default), and a state nothing can emit is a state nothing will handle correctly. Nextcloud's `"none"` and `-3` both decode to `Unlimited`.
+
+`NormalizeQuota` for Nextcloud is the `humanFileSize` round trip: divide by 1024 repeatedly, rounding to one decimal at each step, until below 1024, then parse the resulting string back to bytes. Confirm it against `Util::humanFileSize` in the first adapter commit; the captured pairs in `tests/fixtures/` are the test vector.
+
+### Provider notes
+
+These are verified against Nextcloud `stable34` and Immich v3.2.0 (spec `v3.2.1`). The full reasoning is in [ADR-0014](docs/decisions.md#adr-0014-provider-write-paths-as-they-actually-are); what follows is what an implementer needs.
+
+**Nextcloud**, OCS Provisioning API.
+
+- Read: `GET /ocs/v2.php/cloud/users/details`, with `OCS-APIRequest: true` and `Accept: application/json` (XML otherwise). **`ocs.data.users` is a map keyed by account id, not an array**, and that key is the `ExternalID`. The configured quota is `ocs.data.users.<id>.quota.quota`, which may be a number, `-3` for unlimited, or the string `"none"`.
+- Never read `quota.total` as the configured quota: it is the effective space for a bounded account and the sentinel `-3` for an unlimited one. Neither is what Nuno sets.
+- Every field of the quota object is optional, and on a storage error the whole object serializes as `[]`. Usage is `Unknown` when the quota object is absent, `[]`, or missing `total` or `relative`: the lookup failed and nothing can be concluded.
+- A complete quota object with `firstLoginTimestamp` of 0 means usage is **known and zero**, not unknown: the account exists and holds nothing, because nobody can upload without authenticating. Such an account is fully writable, which is what lets a new member's quota be correct before they first open the service. See [ADR-0024](docs/decisions.md#adr-0024-a-person-who-has-never-logged-in-still-gets-their-quota).
+- Write: `PUT /ocs/v2.php/cloud/users/{id}` with `key=quota&value=<bytes>`. The value is stored through `humanFileSize`, which rounds to one decimal per unit, so `NormalizeQuota` must apply the same transform. Measured: 26844594176 in, 26843545600 out; 53687091200 stores as `"50 GB"`.
+- Unlimited is written as `value=none`, never as `-3`: a numeric -3 is parsed as a byte count, which is the most destructive value the API accepts. `files/allow_unlimited_quota` can refuse it, which is a typed error, not a crash.
+- Auth: an app password cannot write (`PasswordConfirmationRequired`, verified: 403). Either whitelist Nuno's address in `allowed_no_password_confirmation_ranges`, or use a dedicated admin without 2FA, which is verified to work. `Health()` proves it with a write probe.
+- Startup check: refuse to manage an instance where `oidc_login_default_quota` is set, or where `user_ldap` defines `ldapQuotaAttribute` or `ldapQuotaDefault`. Both rewrite quotas behind Nuno's back, the first on every OIDC login.
+- Writes are limited to 50 per 10 minutes. A 429 is a `ThrottledError`, not a failure.
+- On `/ocs/v2.php` the HTTP status and `ocs.meta.statuscode` agree (the write probe returned 403 in both). Parse the envelope, read both, treat a disagreement as a `ProviderError`. The 997-with-HTTP-200 convention belongs to `/ocs/v1.php` and does not apply here.
+- Reading creates missing home folders. Observe is not side-effect free here.
+
+**Immich**, admin API.
+
+- Read: `GET /api/admin/users` for accounts and configured quota, plus `GET /api/server/statistics` for live per-user usage. The authoritative value for `Account.Used` is `usageByUser[].usage`; `quotaUsageInBytes` is only a cross-check.
+- Usage is `Unknown` when `|quotaUsageInBytes - usage| > max(64 MiB, 1% of usage)`. Measured divergence on a healthy account was 9.5 MB out of 9.8 GB (0.096 percent), so a tighter absolute threshold would mark a working account permanently unwritable, and there is no override for unknown state.
+- Accounts are soft-deleted: skip anything whose `status` is not `active` or whose `deletedAt` is set, before linking and before writing.
+- `oauthId` carries the OIDC subject and is byte-identical to the Nextcloud account id for the same person. It is an exact cross-provider join and the linker prefers it over email.
+- Write: `PUT /api/admin/users/{id}` with `{"quotaSizeInBytes": N}`. Deprecated in v3 in favour of `PATCH`, which is absent from the OpenAPI spec. Unlimited is an explicit `null`; an omitted key means "do not touch"; `0` is legal and blocks all uploads.
+- Auth: `x-api-key` with scopes `adminUser.read` and `adminUser.update`.
+- `CanSetDefaultQuota` is false. Immich has no instance-wide default.
+
+Adapters return typed errors (`AuthError`, `UnreachableError`, `UnsupportedError`, `ThrottledError`, `ProviderError`) so the reconciler can decide what is fatal.
 
 ## 3. Domain model
-
-The domain is small on purpose.
 
 ```
 User
   ID                 internal
-  ExternalID         lldap uid or email
-  DisplayName
-  Email
   Source             lldap | manual
-  Groups             from the identity source
+  SourceUUID         entryuuid, the identity; uid and email are attributes
+  UID, Email, DisplayName
+  Status             active | orphaned
+  Groups             by group UUID
   TierOverride       optional
-  ProviderOverrides  optional, Later
 
 Tier
-  Name               "standard", "admin"
-  BudgetBytes        total
-  Allocations        how the budget is split per provider
-  IsDefault          bool
+  ID                 integer key; renaming is free
+  Name               unique
+  Budget             tagged value; the base percent allocations resolve against
+  Allocations        per provider type
+  IsDefault
+
+UserProviderOverride  above every tier, per provider
+  UserID, ProviderID, Quota
 
 Allocation
   ProviderType
-  Mode               absolute | percent
+  Mode               absolute | percent | unlimited
   Value              bytes, or 0..100
 
-ExternalAccount      observed, refreshed by reconcile
-  UserID
-  ProviderID
-  QuotaBytes         nil means unlimited or unknown
-  UsedBytes
-  ObservedAt
+GroupTier            the edge FR-4 depends on
+  GroupUUID, TierID
+
+Provider             an INSTANCE, not a type
+  ID, Type, Name
+  MatchKey           which of the adapter's MatchKeys this instance uses
+  ConfigRef          the env prefix its credentials and URL are read from
+
+AccountLink          only real links
+  UserID, ProviderID, ExternalID, Origin(matched|manual)
+  unique(UserID, ProviderID) and unique(ProviderID, ExternalID)
+
+LinkIssue            recomputed every observe
+  ProviderID, Kind(unlinked|ambiguous|dangling|stale|unmanaged)
+  UserID?, ExternalID?, Detail
+
+ExternalAccount      observed state, keyed by the provider's account
+  ProviderID, ExternalID, UserID?   (null = unmanaged)
+  Quota, Used        tagged values
+  ObservedAt, ObserveOK
+
+ReconcileRun
+  ID, StartedAt, FinishedAt, Mode, Actor, ConsentShrink, Status
+  Snapshot           the observed state the plan was computed from
 
 AuditEntry
-  At, Actor, UserID, ProviderID, Field, From, To, Result
+  RunID, At, Actor, UserID, ProviderID, Field, From, To, Result
+
+MemberToken / AdminKey
+  Hash (sha256), Label, CreatedAt, LastUsedAt, RevokedAt
 ```
+
+An `Allocation` that is absent for a provider is not a zero allocation. There is no row, the planner emits no change, and the provider keeps whatever it has. Only `mode: unlimited` lifts a ceiling, and only explicitly. The consequence is a leak worth surfacing: a user moved off a tier that allocated Immich keeps their old Immich ceiling forever, so `managed: false` appears on that provider in the UI and in the API.
+
+`Provider` is an instance from day one even though the MVP runs one per type. Keying allocations on type while accounts key on instance is the inconsistency that would force a migration, a resolver signature change and an API version bump the moment someone adds a second Nextcloud.
 
 ### Policy resolution
 
-Precedence is deterministic:
+Resolution happens per provider, not per tier. See [ADR-0012](docs/decisions.md#adr-0012-tier-resolution-happens-per-provider) and [ADR-0020](docs/decisions.md#adr-0020-budget-is-an-input-to-percentages-and-an-output-to-people).
 
 ```
-effectiveTier(user) =
-    user.TierOverride              if set
-    else tierOf(user.Groups)       if exactly one group maps to a tier
-    else defaultTier               otherwise
+ceiling(user, provider) =
+    override(user, provider)                 if set          // FR-15
+    else max over candidates of allocationFor(provider)
+    where candidates =
+        {user.TierOverride}                  if set
+        else {tier | group in user.Groups, groupTier(group) = tier}
+        else {defaultTier}
+    and Unlimited is the top element, an absent allocation contributes nothing
+    result: Unlimited | Bytes | absent (no change is ever emitted)
 
-desiredQuota(user, provider) = effectiveTier(user).AllocationFor(provider)
+allocationFor(tier, provider) =
+    Unlimited                                if mode is unlimited
+    tier.Allocation.Value                    if mode is absolute
+    percent of (tier.Budget - sum of absolute allocations)   if mode is percent
 ```
 
-If a user is in several tier groups, resolution must be deterministic and documented. Proposal: the tier with the highest explicit priority wins, and ties are a configuration error reported at startup, never resolved by map iteration order. This is an **[OPEN]** detail.
+A tier whose absolute allocations exceed its budget is a configuration error, refused when written and when imported, never resolved to a negative ceiling: Nextcloud reads negative values as sentinels, so an unvalidated negative grants unlimited instead of failing. Percentages need not sum to 100; over 100 is a deliberate over-commit and warns on the tier row and in the plan.
+
+The **effective budget** reported to a person is the sum of their resolved ceilings, unlimited if any is. It is an output and may legitimately differ from any tier's `Budget`, which is only the base for percentages.
+
+Taking the maximum per provider is what actually delivers "most generous", which whole-tier resolution by budget did not: the total budget is not monotone in the per-provider ceilings it produces. There are no ties to break.
+
+Resolution is pure and records why: for each provider it stores which tier supplied the winning ceiling and whether it came from an override, a group or the default. `nuno explain <user>` prints that chain together with group membership, the account link and its origin, the last observed values and the recent audit entries. It is the first thing to reach for when a number is wrong, and the best available test harness for the resolver.
 
 ## 4. Reconcile loop
 
 ```
-observe()   -> refresh ExternalAccounts from every provider
-plan()      -> for each (user, provider):
-                 desired  = resolve(user, provider)
-                 observed = account.QuotaBytes
-                 if desired != observed: emit Change(user, provider, from, to)
-apply(plan) -> for each Change, unless dry-run:
-                 provider.SetQuota(user, to)
-                 write AuditEntry
-report()    -> summary and notifications
+observe()   -> for each provider: list accounts, read configured quota and usage
+               a provider that fails is degraded, not fatal; its accounts keep their last values
+               and every change against it becomes unknown-state
+link()      -> match accounts to users by the provider's match key plus manual links
+               revalidate: absent external id -> dangling; changed key -> stale
+               record every issue; never write to an account not seen this cycle
+plan()      -> for each linked (user, provider):
+                 ceiling  = resolve(user, provider)        // may be absent
+                 desired  = provider.NormalizeQuota(ceiling)
+                 observed = account.Quota
+                 if absent or desired == observed: nothing
+                 else emit Change(user, provider, from, to, class)
+                   class = safe | shrink-below-usage | unknown-state
+apply(plan) -> re-observe the affected accounts and re-classify
+               refuse any change that became riskier, and any plan older than the window (default 5 minutes)
+               for each Change, unless dry-run:
+                 unknown-state: never applied, no flag exists
+                 shrink-below-usage: applied only with consent, else skipped and reported
+                 provider.SetQuota(account.ExternalID, to), paced against the rate limit
+                 write AuditEntry with the run id
+report()    -> applied, failed, skipped, guarded; notifications; exit code
 ```
 
-Guarantees:
+Guarantees, stated as what is actually true:
 
-- Idempotent: `plan()` is pure given observed state. Applying then re-planning yields an empty plan.
-- Fail loud: any `ProviderError` aborts the run with a non-zero result and a notification. No partial success.
-- Dry-run: `apply` is skipped, the plan is returned and logged.
-- Scoped: observe only reads. A read failure on one provider marks that provider degraded but does not wipe data.
+- **Idempotent.** `plan()` is pure given observed state, and comparison is normalized, so applying then re-planning yields an empty plan. Guarded changes reappear by design.
+- **Loud.** A `ProviderError` stops the run for that provider with a non-zero result and a notification. Earlier writes stand and are audited: there is no rollback for a quota already written, and the state is safe because re-running converges. Reports never claim nothing happened.
+- **Bounded.** Writes are paced under the provider's rate limit. A throttled run stops cleanly and resumes next cycle.
+- **Never blind.** No link, no write. No observed account this cycle, no write. Unknown state, no write.
 
-## 5. Storage
+### Change classification
 
-SQLite by default (a single file under `/data`), accessed through a repository interface so Postgres can be added later. Migrations are explicit and versioned, using goose or a small embedded migration runner.
+`shrink-below-usage` means the target is at or below what the person already stores (`target <= used`: a quota exactly equal to usage already blocks uploads). Consent-gated, never available to a scheduled run.
 
-Schema sketch: `users`, `groups`, `tiers`, `allocations`, `providers`, `external_accounts`, `audit_log`, `settings`, and `usage_samples` (Later).
+`unknown-state` means usage could not be trusted: the provider read failed, Nextcloud returned an incomplete quota object, or Immich's cached counter disagrees with the live aggregate beyond the threshold. A never-logged-in account with a complete quota object is not unknown, it is zero (ADR-0024). It is never applied and there is no flag to force it, because there is no safe consent for writing against state you do not have.
 
-## 6. Tech stack
+The guardrail is the one sanctioned exception to "no silent skips" in `AGENTS.md`, and it is not silent: named in the plan, in the report, in the UI and in the exit status. Exit codes are a contract: 0 clean, 1 error, 2 applied but incomplete, 3 configuration or startup failure. `--dry-run` returns 2 when the plan is non-empty.
+
+## 5. HTTP surface
+
+Three audiences, one domain underneath. See [ADR-0017](docs/decisions.md#adr-0017-usage-api-dashboard-first-per-person-second).
+
+The **admin surface** is the UI plus the routes it calls. It binds to `127.0.0.1` unless explicitly configured otherwise, and refuses to listen on a public interface without an acknowledgement in the configuration. A static admin password is supported so that "no proxy yet" never means "no auth".
+
+The **dashboard endpoint** is what ships first, because the first consumer is a shared homepage:
+
+```
+GET /api/v1/usage
+Authorization: Bearer <admin key>
+
+{
+  "schema": 1,
+  "users": [
+    {
+      "user": "alice",
+      "user_uuid": "11111111-1111-4111-8111-111111111111",
+      "budget_bytes": 214748364800,
+      "used_bytes": 49392123904,
+      "used_percent": 23.0,
+      "providers": [
+        {"type": "nextcloud", "quota_bytes": 53687091200, "used_bytes": 1073741824,
+         "used_percent": 2.0, "managed": true, "status": "ok",
+         "observed_at": "2026-09-14T22:00:00Z"},
+        {"type": "immich", "quota_bytes": 161061273600, "used_bytes": 48318382080,
+         "used_percent": 30.0, "managed": true, "status": "ok",
+         "observed_at": "2026-09-14T22:00:00Z"}
+      ]
+    }
+  ]
+}
+```
+
+The **member endpoint**, `GET /api/v1/me/usage`, returns one person's own entry in the same shape, authenticated by an opaque per-user token. It ships when there are non-admin members to serve.
+
+Rules that hold for both: `quota_bytes` is always the **observed** ceiling, never a desired one; `null` means unlimited; `used_percent` is `null` when the ceiling is unlimited or zero, never `NaN`; `observed_at` and `status` are per provider; `managed: false` marks a ceiling left over from a policy that no longer allocates that provider. Each user entry carries a stable `user_uuid` and the array is sorted by it, because a widget addresses fields by path and an unstable order would swap two people's numbers. Neither credential grants writes.
+
+`status` is `ok` while `observed_at` is within twice the refresh interval, `stale` beyond it, `unavailable` when the last observe failed. The refresh interval defaults to 15 minutes.
+
+Before M2 there is no policy, so `budget_bytes` is the sum of observed ceilings and `managed` is `false` everywhere. The shape does not change when policy arrives, only the meaning of those two fields. See [ADR-0022](docs/decisions.md#adr-0022-what-the-usage-endpoint-means-before-policy-exists).
+
+Three credential types exist and are never interchangeable: the **admin key** (machine, read-only, `/api/v1/usage`, bootstrapped from `NUNO_ADMIN_KEY`), the **member token** (one person, read-only, `/api/v1/me/usage`), and the **admin password** (a human in the UI when no proxy provides auth).
+
+Because these numbers are only as fresh as the last observe, a scheduled read-only usage refresh ships with the endpoint. Observing does not write, so none of the caution around scheduled reconcile applies to it.
+
+## 6. Storage
+
+SQLite (a single file under `/data`), through repository interfaces so Postgres remains possible. Driver: `modernc.org/sqlite`, no cgo, with one DSN defined in one place: WAL, `busy_timeout`, `foreign_keys(1)`, `synchronous(NORMAL)`, a single-connection writer pool and a separate read pool.
+
+Tables: `users`, `groups`, `group_tiers`, `tiers`, `allocations`, `user_provider_overrides`, `providers`, `account_links`, `link_issues`, `external_accounts`, `reconcile_runs`, `plans`, `audit_log`, `admin_keys`, `member_tokens`, `settings`, and `usage_samples` (Later).
+
+Migrations run on boot from `nuno serve`, after copying the database to `/data/backups/` and keeping the last few. A database newer than the binary refuses to start. Only `nuno serve` and `nuno migrate` migrate.
+
+The database is the only home for policy, so it must be recoverable. The supported backup is `sqlite3 .backup` on a snapshotted dataset, never a copy of a live WAL database. See [ADR-0019](docs/decisions.md#adr-0019-what-v01-does-not-do) for why this replaced a bespoke YAML export.
+
+Concurrency is handled by having one writer: when a server is running, the CLI is an HTTP client to it. See [ADR-0018](docs/decisions.md#adr-0018-one-writer-the-cli-talks-to-the-server).
+
+## 7. Tech stack
 
 Accepted: **Go**, see [ADR-0001](docs/decisions.md#adr-0001-tech-stack).
 
-- HTTP router: `net/http` with `chi` if routing grows.
-- Database: SQLite via `modernc.org/sqlite` (pure Go, no cgo) or `mattn/go-sqlite3` if cgo is acceptable.
-- Migrations: `pressly/goose` or an embedded runner.
-- LDAP: `go-ldap/ldap`.
-- Notifications: `apprise` over HTTP, or direct ntfy/webhook clients. Apprise keeps one abstraction for many channels.
-- Templates: `html/template` with HTMX and Tailwind, no build step.
-- HTTP client: `net/http` with explicit timeouts and a small retry helper.
-- Packaging: multi-stage `Dockerfile` producing a static binary on a distroless or alpine base.
+- HTTP: `net/http`. Go 1.22 patterns cover method and wildcard routing; no router dependency at this route count.
+- Database: `modernc.org/sqlite`, migrations with `pressly/goose`.
+- LDAP: `go-ldap/ldap`. Against LLDAP: request `memberOf` explicitly (it is absent from the wildcard attribute set, so a `*` search returns no group membership), accept both `uid=` and `cn=` RDN forms, use `ldaps://` or plaintext on a private network (LLDAP does not implement StartTLS), and store `entryuuid` for users and groups.
+- Notifications: a plain outbound webhook with a JSON body. No Apprise.
+- Templates: `html/template` with HTMX, both embedded via `embed.FS`. HTMX is vendored, never a CDN: the container must work offline. One hand-written stylesheet, no Tailwind, no build step.
+- Logging: `log/slog`, JSON.
+- HTTP client: `net/http` with explicit timeouts, bounded retries and per-provider pacing.
+- Packaging: multi-stage `Dockerfile` producing a static binary on distroless.
 
-## 7. Security
+## 8. Security
 
 - Nuno holds credentials that can change quotas on every managed service. Treat it as a privileged service.
-- Secrets come from env or files (Docker secrets style). Never committed, never in the database, never in logs. Redact provider credentials in all output.
-- The UI is meant to run behind the existing SSO or forward-auth layer. Nuno does not implement authentication in the MVP. It must document that it should not be exposed on a public interface without a proxy.
-- Quota changes are the only write operation. There is no delete path for user data, by design.
-- Every write is audited.
+- Secrets come from env or files. Never committed, never in the database, never in logs. Redact everywhere.
+- The admin surface binds to localhost by default and must be explicitly configured to listen wider. A static admin password is available so an unproxied deployment is still authenticated. Forward-auth headers are trusted only from a configured proxy address.
+- The member API is separable onto its own listener, so exposing usage to a dashboard never means exposing the admin panel.
+- Provider credentials are least-privilege where the provider allows it: an Immich API key scoped to `adminUser.read` and `adminUser.update`, not `all`.
+- Member tokens and admin keys are capability keys, not logins: random 32 bytes, shown once, stored hashed, revocable, rate limited, read-only. They never appear in logs.
+- Quota changes are the only write operation. There is no delete path for user data, by design. Every write is audited with its run id.
 
-## 8. Observability
+## 9. Observability
 
-- `/healthz` for the process, plus per-provider health surfaced in the UI.
-- Structured logs in JSON, one line per change.
+- `/healthz` for the process, plus per-provider health in the UI: reachable, version, in supported range, and whether the write probe succeeded.
+- Structured JSON logs, one line per change.
 - `/metrics` for Prometheus, Later.
-- Notifications on failure and on thresholds, via Apprise.
+- Webhook notification on failure and on newly guarded changes, keyed so a persistent guarded change does not notify every cycle.
 
-## 9. Testing strategy
+## 10. Testing strategy
 
 | Level | What | How |
 |---|---|---|
-| Unit | policy resolution, planner, provider parsers | pure functions, no network |
+| Unit | resolution, planner, classification, provider parsers | pure functions, no network |
 | Contract | every adapter against recorded fixtures | `httptest` servers and golden files |
-| Integration | adapters against real Nextcloud and Immich | `docker compose -f docker-compose.test.yml` |
+| Integration | adapters against real Nextcloud and Immich | `docker compose -f docker-compose.test.yml`, tagged `//go:build integration` |
 | End-to-end | reconcile a seeded user, assert the quota changed | integration environment plus CLI |
 
-The integration environment is not optional for the two MVP providers. The whole value of Nuno is not corrupting quota state.
+Contract tests are the CI gate on every pull request. The real-stack environment is a manual `make integration` plus a weekly scheduled job, with pinned image digests, never a merge blocker: keeping a live Immich and Nextcloud green is a recurring cost that would otherwise be paid in abandoned tests.
 
-## 10. Extending Nuno with a new provider
+Four properties get a dedicated test each, because they are the ones that hurt when wrong:
+
+1. Plan, apply, plan again yields an empty second plan, given consent or given no risky changes.
+2. An absent allocation emits no change at all.
+3. A shrink at or below current usage is never applied without consent.
+4. A change against unknown usage is never applied, with or without consent.
+
+Fixtures must include the shapes that break naive decoding, all of them real responses: an OCS error body returned with HTTP 200, a `quota` field serialized as `[]`, a quota of `-3` and of `"none"`, a user with `used: 0` and no `total`, and a 429.
+
+`tests/fixtures/` already holds responses captured from a live Nextcloud 34.0.4 and Immich v3.2.0 on 2026-09-15, including the 403 write probe and both sides of the lossy round trip. The degraded shapes are not among them and still need writing.
+
+## 11. Extending Nuno with a new provider
 
 1. Implement the provider interface in `internal/providers/<name>/`.
-2. Declare capabilities honestly.
-3. Add contract tests with recorded fixtures.
-4. Register it in the provider registry, the composition root.
-5. Add a row to the provider matrix in the README.
+2. Declare capabilities honestly, including `MatchKey` and what identity the service actually exposes.
+3. Implement `NormalizeQuota` to match what the service really stores, and prove `Normalize(Normalize(x)) == Normalize(x)`.
+4. Add contract tests with recorded fixtures, including the degraded and error shapes.
+5. Register it in the provider registry, the composition root.
+6. Add a line to the README's "known to work with".
 
-No core changes. If a provider needs a new capability, that is a core interface change and requires an ADR.
+The interface as written is shaped by two HTTP services with per-user byte quotas. The first provider that does not fit that shape (ZFS has no HTTP and quotas per dataset; S3 has no native quota concept) is expected to change it. That is a core interface change and requires an ADR.
