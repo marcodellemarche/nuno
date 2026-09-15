@@ -494,3 +494,186 @@ func TestManualUsers(t *testing.T) {
 		t.Error("deleting someone already gone must report nothing removed")
 	}
 }
+
+func TestPolicyRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	db := migrated(t)
+	cloud := provider(t, db, "cloud", "nextcloud")
+	photos := provider(t, db, "photos", "immich")
+
+	standard := core.Tier{
+		Name:      "standard",
+		Budget:    core.MustBytes(100 << 30),
+		IsDefault: true,
+		Allocations: []core.Allocation{
+			{ProviderID: cloud, Mode: core.ModePercent, Value: 25},
+			{ProviderID: photos, Mode: core.ModePercent, Value: 75},
+		},
+	}
+	tierID, err := db.SaveTier(ctx, standard)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A tier that cannot resolve honestly is refused here, not later.
+	_, err = db.SaveTier(ctx, core.Tier{
+		Name: "broken", Budget: core.MustBytes(10 << 30),
+		Allocations: []core.Allocation{{ProviderID: cloud, Mode: core.ModeAbsolute, Value: 11 << 30}},
+	})
+	if err == nil {
+		t.Error("absolute allocations above the budget must be refused at write time")
+	}
+
+	policy, err := db.LoadPolicy(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(policy.Tiers) != 1 {
+		t.Fatalf("tiers = %+v", policy.Tiers)
+	}
+	loaded := policy.Tiers[tierID]
+	if !loaded.Budget.Equal(core.MustBytes(100<<30)) || len(loaded.Allocations) != 2 {
+		t.Errorf("tier = %+v", loaded)
+	}
+	if policy.DefaultTierID == nil || *policy.DefaultTierID != tierID {
+		t.Errorf("default = %v", policy.DefaultTierID)
+	}
+
+	// Saving again with one allocation removed means the tier is now silent
+	// about that provider, which is not the same as zero.
+	standard.Allocations = standard.Allocations[:1]
+	if _, err := db.SaveTier(ctx, standard); err != nil {
+		t.Fatal(err)
+	}
+	policy, _ = db.LoadPolicy(ctx)
+	if got := len(policy.Tiers[tierID].Allocations); got != 1 {
+		t.Errorf("allocations = %d, want the removed one gone rather than zeroed", got)
+	}
+	if _, allocates := policy.Tiers[tierID].AllocationFor(photos); allocates {
+		t.Error("a removed allocation must read as absent")
+	}
+}
+
+func TestOnlyOneDefaultTier(t *testing.T) {
+	ctx := context.Background()
+	db := migrated(t)
+
+	first, err := db.SaveTier(ctx, core.Tier{Name: "a", IsDefault: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The schema refuses a second default outright.
+	if _, err := db.SaveTier(ctx, core.Tier{Name: "b", IsDefault: true}); err == nil {
+		t.Error("two default tiers must be impossible")
+	}
+
+	second, err := db.SaveTier(ctx, core.Tier{Name: "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetDefaultTier(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	policy, _ := db.LoadPolicy(ctx)
+	if policy.DefaultTierID == nil || *policy.DefaultTierID != second {
+		t.Errorf("default = %v, want it moved", policy.DefaultTierID)
+	}
+	if policy.Tiers[first].IsDefault {
+		t.Error("the old default must have been cleared")
+	}
+	if err := db.SetDefaultTier(ctx, 999); err == nil {
+		t.Error("a tier that does not exist cannot be the default")
+	}
+}
+
+func TestGroupAndUserOverrides(t *testing.T) {
+	ctx := context.Background()
+	db := migrated(t)
+	cloud := provider(t, db, "cloud", "nextcloud")
+
+	if _, err := db.ReplaceIdentity(ctx, core.IdentitySnapshot{
+		Source: core.SourceLDAP,
+		Groups: []core.Group{{SourceUUID: "g-staff", Name: "staff"}},
+		Users:  []core.User{{SourceUUID: "u-alice", UID: "alice", GroupUUIDs: []string{"g-staff"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	users, _ := db.ListUsers(ctx)
+	alice := users[0]
+
+	tierID, err := db.SaveTier(ctx, core.Tier{
+		Name: "staff", Budget: core.MustBytes(50 << 30),
+		Allocations: []core.Allocation{{ProviderID: cloud, Mode: core.ModeAbsolute, Value: 50 << 30}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.MapGroupToTier(ctx, "g-staff", tierID); err != nil {
+		t.Fatal(err)
+	}
+	// Mapping a group the directory has not returned is refused, with the
+	// command that fixes it.
+	if err := db.MapGroupToTier(ctx, "g-unknown", tierID); err == nil {
+		t.Error("an unknown group must be refused")
+	}
+
+	policy, _ := db.LoadPolicy(ctx)
+	if policy.GroupTiers["g-staff"] != tierID {
+		t.Errorf("group tiers = %+v", policy.GroupTiers)
+	}
+
+	if err := db.SetUserTierOverride(ctx, alice.ID, &tierID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetProviderOverride(ctx, alice.ID, cloud, core.MustBytes(1<<40), OverrideAdopted); err != nil {
+		t.Fatal(err)
+	}
+	// An override is an instruction, and there is no instruction meaning
+	// "write a value nobody knows".
+	if err := db.SetProviderOverride(ctx, alice.ID, cloud, core.Unknown(), OverrideManual); err == nil {
+		t.Error("an unknown override must be refused")
+	}
+
+	up, origins, err := db.UserPolicy(ctx, alice.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if up.TierOverride == nil || *up.TierOverride != tierID {
+		t.Errorf("tier override = %v", up.TierOverride)
+	}
+	if got := up.ProviderOverrides[cloud]; !got.Equal(core.MustBytes(1 << 40)) {
+		t.Errorf("provider override = %v", got)
+	}
+	if origins[cloud] != OverrideAdopted {
+		t.Errorf("origin = %q, want it distinguishable from a hand-set one", origins[cloud])
+	}
+
+	// Resolution over what was stored must produce the override.
+	resolution := core.Resolve(alice, cloud, policy, up)
+	if resolution.Rule != core.RuleProviderOverride || !resolution.Ceiling.Equal(core.MustBytes(1<<40)) {
+		t.Errorf("resolution = %+v", resolution)
+	}
+
+	cleared, err := db.ClearProviderOverride(ctx, alice.ID, cloud)
+	if err != nil || !cleared {
+		t.Fatalf("clear = %v, %v", cleared, err)
+	}
+	if err := db.SetUserTierOverride(ctx, alice.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	up, _, _ = db.UserPolicy(ctx, alice.ID)
+	if up.TierOverride != nil || len(up.ProviderOverrides) != 0 {
+		t.Errorf("overrides = %+v, want them cleared", up)
+	}
+
+	// Removing a group mapping leaves the tier and the group alone.
+	unmapped, err := db.UnmapGroup(ctx, "g-staff")
+	if err != nil || !unmapped {
+		t.Fatalf("unmap = %v, %v", unmapped, err)
+	}
+	policy, _ = db.LoadPolicy(ctx)
+	if len(policy.GroupTiers) != 0 || len(policy.Tiers) != 1 {
+		t.Errorf("policy = %+v", policy)
+	}
+}

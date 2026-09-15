@@ -278,3 +278,26 @@ func (db *DB) DeleteUser(ctx context.Context, id int64) (bool, error) {
 	affected, err := res.RowsAffected()
 	return affected > 0, err
 }
+
+// ListGroups returns the directory groups, which is what a tier mapping picks
+// from.
+func (db *DB) ListGroups(ctx context.Context) ([]core.Group, error) {
+	rows, err := db.R.QueryContext(ctx,
+		`SELECT id, source, source_uuid, name, display_name FROM "groups" ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var groups []core.Group
+	for rows.Next() {
+		var g core.Group
+		var source string
+		if err := rows.Scan(&g.ID, &source, &g.SourceUUID, &g.Name, &g.DisplayName); err != nil {
+			return nil, err
+		}
+		g.Source = core.IdentitySource(source)
+		groups = append(groups, g)
+	}
+	return groups, rows.Err()
+}

@@ -57,13 +57,15 @@ Done when the aggregate page shows both services for both people, a Homepage `cu
 
 ## M2: policy and plan, no writes
 
-- [ ] Tiers with a budget, allocations (percent, absolute, unlimited, absent), group-to-tier mapping, per-user and per-user-per-provider overrides (FR-4, FR-5, FR-10 to FR-19)
-- [ ] Per-provider resolution as a pure function, with the reason recorded
-- [ ] Planner with change classification (safe, shrink-below-usage, unknown-state) (FR-30, FR-38, FR-38a, FR-38d)
-- [ ] `nuno plan`, `nuno explain <user>`, `nuno adopt` (FR-30, FR-31, FR-70, FR-71)
-- [ ] Persisted plans and reconcile runs
+- [x] Tiers with a budget, allocations (percent, absolute, unlimited, absent), group-to-tier mapping, per-user and per-user-per-provider overrides (FR-4, FR-5, FR-10 to FR-19)
+- [x] Per-provider resolution as a pure function, with the reason recorded
+- [x] Planner with change classification (safe, shrink-below-usage, unknown-state) (FR-30, FR-38, FR-38a, FR-38d)
+- [x] `nuno plan`, `nuno explain <user>`, `nuno adopt` (FR-30, FR-31, FR-70, FR-71), plus `nuno tiers` and `nuno override` to edit policy before the UI can
+- [x] Persisted plans and reconcile runs
 
 Done when `nuno plan` against the real stack produces a plan that is agreed with, and `nuno adopt` makes it empty. No applier exists yet, so being wrong about the allocation model costs nothing but a text file.
+
+Against the captured fixtures, a `standard` tier of 25 percent Nextcloud and 75 percent Immich on a 200 GiB budget resolves to exactly the ceilings the stack already has, so the plan is empty without adopting anything. That is the allocation model reproducing existing practice rather than a coincidence worth relying on.
 
 ## M3: apply
 

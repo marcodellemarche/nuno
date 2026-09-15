@@ -830,3 +830,226 @@ func (d *detectingProvider) CompetingWriters(context.Context) ([]core.CompetingW
 func (d *detectingProvider) UndetectableWriters() []core.CompetingWriter {
 	return []core.CompetingWriter{{Setting: "oidc_login_default_quota", Remedy: []string{"occ config:system:get oidc_login_default_quota"}}}
 }
+
+// A plan over a stack that has just been adopted must be empty. That is the
+// property nuno adopt exists for (FR-70).
+func TestAdoptMakesTheFirstPlanEmpty(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.identity(
+		core.User{SourceUUID: "u-alice", UID: "alice", Email: "alice@example.org"},
+		core.User{SourceUUID: "u-bob", UID: "bob", Email: "bob@example.org"},
+	)
+
+	// Two people with different hand-set quotas, which is exactly what cannot
+	// be expressed as tier overrides without one tier each.
+	aliceAccount := account("nc-alice", "alice@example.org")
+	aliceAccount.Quota = core.MustBytes(50 << 30)
+	bobAccount := account("nc-bob", "bob@example.org")
+	bobAccount.Quota = core.MustBytes(200 << 30)
+
+	provider := &fake{typ: "nextcloud", accounts: []core.Account{aliceAccount, bobAccount}}
+	instances := []Instance{h.instance("cloud", "nextcloud", core.MatchEmail, provider)}
+	if _, err := h.engine.Observe(ctx, instances); err != nil {
+		t.Fatal(err)
+	}
+
+	// A default tier that would rewrite both of them.
+	tierID, err := h.db.SaveTier(ctx, core.Tier{
+		Name: "standard", Budget: core.MustBytes(10 << 30), IsDefault: true,
+		Allocations: []core.Allocation{{ProviderID: instances[0].Row.ID, Mode: core.ModeAbsolute, Value: 10 << 30}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = tierID
+
+	before, err := h.engine.Plan(ctx, instances, PlanFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before.Plan.Changes) != 2 {
+		t.Fatalf("plan = %+v, want it proposing to rewrite both", before.Plan.Changes)
+	}
+
+	adopted, skipped, err := h.engine.Adopt(ctx, instances, PlanFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adopted != 2 || len(skipped) != 0 {
+		t.Fatalf("adopted = %d, skipped = %v", adopted, skipped)
+	}
+
+	after, err := h.engine.Plan(ctx, instances, PlanFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.Plan.Empty() {
+		t.Fatalf("plan after adopt = %+v, want empty by construction", after.Plan.Changes)
+	}
+}
+
+// An unreadable ceiling is not an instruction, so it is not adopted.
+func TestAdoptSkipsWhatItCannotRead(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.identity(core.User{SourceUUID: "u-alice", UID: "alice", Email: "alice@example.org"})
+
+	blind := account("nc-alice", "alice@example.org")
+	blind.Quota = core.Unknown()
+	blind.Used = core.Unknown()
+	instances := []Instance{h.instance("cloud", "nextcloud", core.MatchEmail,
+		&fake{typ: "nextcloud", accounts: []core.Account{blind}})}
+	if _, err := h.engine.Observe(ctx, instances); err != nil {
+		t.Fatal(err)
+	}
+
+	adopted, skipped, err := h.engine.Adopt(ctx, instances, PlanFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adopted != 0 || len(skipped) != 1 {
+		t.Fatalf("adopted = %d, skipped = %v", adopted, skipped)
+	}
+}
+
+func TestPlanOnlyConsidersLinkedAccounts(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.identity(core.User{SourceUUID: "u-alice", UID: "alice", Email: "alice@example.org"})
+
+	instances := []Instance{h.instance("cloud", "nextcloud", core.MatchEmail, &fake{
+		typ: "nextcloud",
+		accounts: []core.Account{
+			account("nc-alice", "alice@example.org"),
+			// Matches nobody, so it is unmanaged and must never be planned
+			// against.
+			account("admin", ""),
+		},
+	})}
+	if _, err := h.engine.Observe(ctx, instances); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.SaveTier(ctx, core.Tier{
+		Name: "standard", Budget: core.MustBytes(10 << 30), IsDefault: true,
+		Allocations: []core.Allocation{{ProviderID: instances[0].Row.ID, Mode: core.ModeAbsolute, Value: 10 << 30}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := h.engine.Plan(ctx, instances, PlanFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Considered != 1 {
+		t.Errorf("considered = %d, want only the linked pair", result.Considered)
+	}
+	for _, change := range result.Plan.Changes {
+		if change.ExternalID == "admin" {
+			t.Error("an unmanaged account must never appear in a plan")
+		}
+	}
+}
+
+func TestPlanFilterNarrowsToOnePersonOrProvider(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.identity(
+		core.User{SourceUUID: "u-alice", UID: "alice", Email: "alice@example.org"},
+		core.User{SourceUUID: "u-bob", UID: "bob", Email: "bob@example.org"},
+	)
+	instances := []Instance{
+		h.instance("cloud", "nextcloud", core.MatchEmail, &fake{typ: "nextcloud", accounts: []core.Account{
+			account("nc-alice", "alice@example.org"), account("nc-bob", "bob@example.org"),
+		}}),
+		h.instance("photos", "immich", core.MatchEmail, &fake{typ: "immich", accounts: []core.Account{
+			account("im-alice", "alice@example.org"), account("im-bob", "bob@example.org"),
+		}}),
+	}
+	if _, err := h.engine.Observe(ctx, instances); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.SaveTier(ctx, core.Tier{
+		Name: "standard", Budget: core.MustBytes(100 << 30), IsDefault: true,
+		Allocations: []core.Allocation{
+			{ProviderID: instances[0].Row.ID, Mode: core.ModeAbsolute, Value: 25 << 30},
+			{ProviderID: instances[1].Row.ID, Mode: core.ModeAbsolute, Value: 75 << 30},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	all, err := h.engine.Plan(ctx, instances, PlanFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all.Plan.Changes) != 4 {
+		t.Fatalf("changes = %d, want four", len(all.Plan.Changes))
+	}
+
+	onePerson, err := h.engine.Plan(ctx, instances, PlanFilter{UID: "ALICE"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(onePerson.Plan.Changes) != 2 {
+		t.Errorf("changes = %d, want alice's two, matched case-insensitively", len(onePerson.Plan.Changes))
+	}
+
+	oneProvider, err := h.engine.Plan(ctx, instances, PlanFilter{Provider: "photos"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(oneProvider.Plan.Changes) != 2 {
+		t.Errorf("changes = %d, want the two on photos", len(oneProvider.Plan.Changes))
+	}
+	for _, change := range oneProvider.Plan.Changes {
+		if change.Provider != "photos" {
+			t.Errorf("change = %+v", change)
+		}
+	}
+}
+
+func TestPlanIsPersistedWithItsRun(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.identity(core.User{SourceUUID: "u-alice", UID: "alice", Email: "alice@example.org"})
+	instances := []Instance{h.instance("cloud", "nextcloud", core.MatchEmail,
+		&fake{typ: "nextcloud", accounts: []core.Account{account("nc-alice", "alice@example.org")}})}
+	if _, err := h.engine.Observe(ctx, instances); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.SaveTier(ctx, core.Tier{
+		Name: "standard", Budget: core.MustBytes(10 << 30), IsDefault: true,
+		Allocations: []core.Allocation{{ProviderID: instances[0].Row.ID, Mode: core.ModeAbsolute, Value: 10 << 30}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := h.engine.Plan(ctx, instances, PlanFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID, err := h.engine.SavePlan(ctx, store.RunPlan, "test", false, result)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body, computedAt, err := h.db.PlanBody(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "nc-alice") {
+		t.Errorf("the stored plan does not contain the change: %s", body)
+	}
+	if computedAt.IsZero() {
+		t.Error("a plan must record when it was computed: apply refuses one that is too old")
+	}
+
+	runs, err := h.db.LastRuns(ctx, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].Status != "pending" || !strings.Contains(runs[0].Summary, "1 changes") {
+		t.Errorf("runs = %+v", runs)
+	}
+}

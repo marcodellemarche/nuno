@@ -171,7 +171,7 @@ UserProviderOverride  above every tier, per provider
   UserID, ProviderID, Quota
 
 Allocation
-  ProviderType
+  ProviderID         an INSTANCE, for the reason stated below this block
   Mode               absolute | percent | unlimited
   Value              bytes, or 0..100
 
@@ -209,7 +209,7 @@ MemberToken / AdminKey
 
 An `Allocation` that is absent for a provider is not a zero allocation. There is no row, the planner emits no change, and the provider keeps whatever it has. Only `mode: unlimited` lifts a ceiling, and only explicitly. The consequence is a leak worth surfacing: a user moved off a tier that allocated Immich keeps their old Immich ceiling forever, so `managed: false` appears on that provider in the UI and in the API.
 
-`Provider` is an instance from day one even though the MVP runs one per type. Keying allocations on type while accounts key on instance is the inconsistency that would force a migration, a resolver signature change and an API version bump the moment someone adds a second Nextcloud.
+`Provider` is an instance from day one even though the MVP runs one per type, and allocations key on the instance for the same reason. Keying allocations on type while accounts key on instance is the inconsistency that would force a migration, a resolver signature change and an API version bump the moment someone adds a second Nextcloud. An earlier draft of the block above said `ProviderType`, which contradicted this paragraph; the instance wins.
 
 ### Policy resolution
 

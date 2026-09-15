@@ -37,6 +37,11 @@ Commands:
   usage               show usage per person and per service
   accounts            list observed accounts, who owns them, and what needs a decision
   users               list, add or remove people who exist in no directory
+  tiers               list and edit tiers, allocations and group mappings
+  override            set or clear a per-user, per-provider ceiling
+  plan                show what a reconcile would change, writing nothing
+  explain             print the whole chain that produced somebody's ceiling
+  adopt               import what each provider already has, so the first plan is empty
   link                link a person to an account explicitly
   unlink              remove a link
   version             print the version
@@ -74,6 +79,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return withApp(stderr, func(ctx context.Context, a *app) int { return showUsage(ctx, a, stdout) })
 	case "accounts":
 		return withApp(stderr, func(ctx context.Context, a *app) int { return listAccounts(ctx, a, stdout) })
+	case "tiers":
+		return withApp(stderr, func(ctx context.Context, a *app) int { return manageTiers(ctx, a, args[1:], stdout) })
+	case "override":
+		return withApp(stderr, func(ctx context.Context, a *app) int { return setOverride(ctx, a, args[1:], stdout) })
+	case "plan":
+		return withApp(stderr, func(ctx context.Context, a *app) int { return showPlan(ctx, a, args[1:], stdout) })
+	case "explain":
+		return withApp(stderr, func(ctx context.Context, a *app) int { return explain(ctx, a, args[1:], stdout) })
+	case "adopt":
+		return withApp(stderr, func(ctx context.Context, a *app) int { return adoptQuotas(ctx, a, args[1:], stdout) })
 	case "users":
 		return withApp(stderr, func(ctx context.Context, a *app) int { return manageUsers(ctx, a, args[1:], stdout) })
 	case "link":
