@@ -4,7 +4,7 @@ This file is for AI coding agents, and for humans who want the same rules. Read 
 
 ## Where we are
 
-M0 closed on 2026-09-15, after a review that superseded six of the original ten decisions. Work has started on M1 in [`ROADMAP.md`](ROADMAP.md). Read `docs/decisions.md` from the bottom: ADR-0011 to ADR-0024 override the earlier ones where they conflict, ADR-0025 to ADR-0027 were raised while starting M1, and a superseded entry carries a pointer at the top. Reopening a decision means a new ADR, not an edit. Treating ADR-0007 or ADR-0010 as current produces wrong code.
+M0 closed on 2026-09-15, after a review that superseded six of the original ten decisions. Work has started on M1 in [`ROADMAP.md`](ROADMAP.md). Read `docs/decisions.md` from the bottom: ADR-0011 to ADR-0024 override the earlier ones where they conflict, ADR-0025 to ADR-0028 were raised while starting M1, and a superseded entry carries a pointer at the top. Reopening a decision means a new ADR, not an edit. Treating ADR-0007 or ADR-0010 as current produces wrong code.
 
 If the spec does not cover a case you hit, do not stall and do not guess silently. Implement the most conservative behavior available, leave a `TODO(spec):` comment naming the gap, and list it under "Spec gaps found" in the pull request. That turns an invisible guess into a reviewable line.
 

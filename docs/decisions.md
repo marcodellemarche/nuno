@@ -598,3 +598,28 @@ For `oidc_login_default_quota` there is no detection. In M1 that has no observab
 - `nuno doctor` has two modes: report, and `--fix` which emits a script. It never executes one.
 - The precondition already in `ROADMAP.md` gains the script, and the deployment docs in M4 carry it.
 - The general rule, for providers not yet written: when a service does not expose the state a precondition depends on, Nuno emits the command that exposes it and does not pretend to know. Diagnosis degrades honestly; it does not guess.
+
+## ADR-0028: On Nextcloud the account id is the OIDC subject, when it looks like one
+
+**Status: Accepted (2026-09-15).** Raised while writing the Nextcloud adapter. Completes [ADR-0021](#adr-0021-corrections-from-the-captured-responses) and [ADR-0013](#adr-0013-identity-keys-and-the-link-lifecycle).
+
+**Context.** `Account.Subject` exists because ADR-0021 found an exact cross-provider join: Immich's `oauthId` for one person is byte-identical to that person's Nextcloud account id, both being the subject issued by the identity provider. Immich exposes it as a field. Nextcloud does not expose it at all: the subject *is* the account id, but only for accounts `oidc_login` auto-registered, and for everyone else the id is a local name. The captured response cannot tell the two apart, because `backend` is `Database` for both the OIDC-registered `alice` and the local `admin`.
+
+Leaving `Subject` empty on Nextcloud is not free. The captured `admin` account has `email: null`, so on that account the ADR-0013 match keys have nothing to work with, and email is exactly the key ADR-0021 calls weaker.
+
+Reading the target stack's Authelia configuration adds a fact and takes one away. It defines no `subject` and no sector identifier, so the `sub` is the opaque identifier Authelia generates and persists in its own storage. That means the subject does identify one person across every provider, which is what the join needs, and it does not identify that person in the directory, which is why the last hop from an account to a directory user still goes through email or an explicit link. The stack does not run on the machine this was written on, so this is read from configuration and not yet confirmed against a live `sub`.
+
+**Options.**
+1. Populate `Subject` from the account id when it has the shape of a UUID, and leave it empty otherwise.
+2. Leave `Subject` empty on Nextcloud and match on email alone.
+3. A per-instance setting naming where the subject comes from.
+
+**Decision.** Option 1.
+
+The safety of this does not rest on the shape test being right about what a subject is. The linker never acts on a value that looks like a subject; it acts on two providers reporting the same one. A false positive therefore requires two providers to report an identical UUID string for two different people, which does not happen by accident. A local Nextcloud account whose id happens to look like a UUID gets a `Subject` that joins to nothing, and nothing follows from it.
+
+**Consequences.**
+- The shape checked is a canonical RFC 4122 UUID, which is what Authelia issues. An identity provider whose subjects are not UUIDs (a bare number, a ULID) is not recognized, and those accounts fall back to email or a manual link. The heuristic is specific to UUID-issuing providers and says so in the code.
+- `backend` is not a usable discriminator and is not consulted: both captured accounts report `Database`.
+- The contract test asserts the outcome on both captured accounts: `alice` carries a subject, `admin` does not.
+- The open question from ADR-0021 stays open, with a partial answer of no: the subject is Authelia's opaque identifier, not LLDAP's `entryuuid`, so email does not leave the design. Confirming it takes one `ldapsearch` and one query against Authelia's storage, on the host where the stack runs.

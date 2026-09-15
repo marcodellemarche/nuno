@@ -7,7 +7,7 @@ M0 closed on 2026-09-15 and implementation has not started, so the most valuable
 1. Read [`README.md`](README.md), [`REQUIREMENTS.md`](REQUIREMENTS.md) and [`ARCHITECTURE.md`](ARCHITECTURE.md).
 2. Check [`ROADMAP.md`](ROADMAP.md). Work should belong to the current milestone.
 3. If your change is architectural, open an ADR in [`docs/decisions.md`](docs/decisions.md) first and discuss it in an issue.
-4. Read `docs/decisions.md` from the bottom. ADR-0011 to ADR-0027 override earlier entries where they conflict.
+4. Read `docs/decisions.md` from the bottom. ADR-0011 to ADR-0028 override earlier entries where they conflict.
 
 ## Development
 
