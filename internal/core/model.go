@@ -2,7 +2,10 @@
 
 package core
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // IdentitySource is where a user came from.
 type IdentitySource string
@@ -107,4 +110,21 @@ type ExternalAccount struct {
 	NeverUsed  bool
 	ObservedAt time.Time
 	ObserveOK  bool
+}
+
+// Writable reports whether this account may be written to at all, before any
+// policy or guardrail is considered (FR-8a).
+func (a ExternalAccount) Writable() bool { return a.Enabled && !a.Deleted }
+
+// NormalizeEmail is the form stored in the indexed column and the form
+// matching compares. Case folding and trimming only: an address is not
+// rewritten beyond what makes two spellings of one mailbox equal (ADR-0013).
+func NormalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
+// NormalizeUsername folds case, because LLDAP itself compares user ids
+// case-insensitively (ADR-0013).
+func NormalizeUsername(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
 }
