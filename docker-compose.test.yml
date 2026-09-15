@@ -1,0 +1,90 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The integration environment: real Nextcloud, real Immich, real LLDAP. It is
+# a manual target and a weekly job, never a merge blocker (ARCHITECTURE
+# section 10).
+#
+# Images carry explicit versions. Pin them to digests before relying on this
+# in CI: a tag moves, and an integration failure should be a message about
+# Nuno rather than about what upstream published overnight.
+
+name: nuno-integration
+
+services:
+  nextcloud:
+    # Verified against 34.0.4. NUNO_IT_NEXTCLOUD_PASSWORD must be the admin's
+    # real password: an app password cannot write a quota (ADR-0014).
+    image: nextcloud:34.0.4-apache
+    environment:
+      SQLITE_DATABASE: nextcloud
+      NEXTCLOUD_ADMIN_USER: admin
+      NEXTCLOUD_ADMIN_PASSWORD: integration-only-password
+      NEXTCLOUD_TRUSTED_DOMAINS: localhost nextcloud
+    ports:
+      - "127.0.0.1:8081:80"
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(0);"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+
+  immich-database:
+    image: ghcr.io/immich-app/postgres:16-vectorchord0.4.3
+    environment:
+      POSTGRES_USER: immich
+      POSTGRES_PASSWORD: integration-only-password
+      POSTGRES_DB: immich
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U immich"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  immich-redis:
+    image: docker.io/valkey/valkey:8-bookworm
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  immich:
+    # Verified against v3.2.0. The API key the test uses needs adminUser.read
+    # and adminUser.update, and is passed in as NUNO_IT_IMMICH_API_KEY.
+    image: ghcr.io/immich-app/immich-server:v3.2.0
+    environment:
+      DB_HOSTNAME: immich-database
+      DB_USERNAME: immich
+      DB_PASSWORD: integration-only-password
+      DB_DATABASE_NAME: immich
+      REDIS_HOSTNAME: immich-redis
+    depends_on:
+      immich-database:
+        condition: service_healthy
+      immich-redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:2283:2283"
+    healthcheck:
+      test: ["CMD", "immich-healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+
+  lldap:
+    image: lldap/lldap:v0.6.3
+    environment:
+      LLDAP_JWT_SECRET: integration-only-secret
+      LLDAP_KEY_SEED: integration-only-seed
+      LLDAP_LDAP_USER_PASS: integration-only-password
+      LLDAP_LDAP_BASE_DN: dc=example,dc=org
+    ports:
+      - "127.0.0.1:3890:3890"
+      - "127.0.0.1:17170:17170"
+    healthcheck:
+      test: ["CMD", "/app/lldap", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 30

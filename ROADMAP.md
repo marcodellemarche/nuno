@@ -81,11 +81,11 @@ Done when changing a tier in the UI fixes both services, the second run is empty
 
 ## M4: publish
 
-- [ ] Contract tests as the CI gate; integration environment as a manual target plus a weekly job, with pinned digests
-- [ ] Documentation: deployment, the Nextcloud credential requirement, the conflicting-writer preconditions, the Homepage widget snippet, "known to work with"
-- [ ] CI (lint, test, build, publish image to ghcr.io)
+- [x] Contract tests as the CI gate; integration environment as a manual target plus a weekly job. The images carry explicit versions and still need pinning to digests before anyone relies on the weekly run
+- [x] Documentation: deployment, the Nextcloud credential requirement, the conflicting-writer preconditions, the Homepage widget snippet, "known to work with"
+- [x] CI (gofmt, vet, race tests, build, image size against NFR-10) and publish on a tag to ghcr.io
 
-Done when tagged `v0.1.0`, with a published image, used by our own homelab.
+Done when tagged `v0.1.0`, with a published image, used by our own homelab. What stands between here and that tag: the integration run has never been executed (the stack does not run on the development machine), the Immich write path is still only exercised against recorded and fake responses, and the module path assumes an org that may not be the real one.
 
 ## Post-v0.1 candidates
 

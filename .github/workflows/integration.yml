@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The real stack, on a schedule and on demand, never as a merge blocker. A
+# failure here is a message about the world, not about the change.
+
+name: integration
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly, early Sunday.
+    - cron: "17 4 * * 0"
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: bring the stack up
+        run: docker compose -f docker-compose.test.yml up -d --wait
+
+      - name: run the integration tests
+        run: make integration
+
+      - name: what the stack said when it failed
+        if: failure()
+        run: docker compose -f docker-compose.test.yml logs --tail 200
+
+      - name: tear it down
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v

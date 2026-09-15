@@ -1,6 +1,6 @@
 # Nuno
 
-> Status: pre-alpha, M1 in progress. The design is frozen and every decision is recorded. What runs today: the scaffold and container, configuration, the SQLite store with migrations, and both provider adapters in read-only form, with `nuno providers health` to exercise them. Nothing writes to a provider yet.
+> Status: pre-alpha, working. Identity sync, linking, the usage page and endpoint, tiers and allocations, the planner and the applier with its guardrails all run, and the CLI covers the day-two work. Not yet: the HTTP client mode that would let a command run against a live server, a per-person endpoint, and a published image. The design is frozen and every decision is recorded.
 
 Nuno is a quota and usage control plane for self-hosted service stacks.
 
@@ -90,11 +90,12 @@ It connects to an identity provider (LLDAP or any LDAP directory), reads and wri
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Components, provider interface, data model, stack |
 | [`ROADMAP.md`](ROADMAP.md) | Milestones from scaffold to v1 |
 | [`docs/decisions.md`](docs/decisions.md) | Architecture decision records, open and accepted |
+| [`docs/deployment.md`](docs/deployment.md) | Installing it: the two preconditions that bite, credentials, the dashboard widget, backup |
 | [`AGENTS.md`](AGENTS.md) | How AI coding agents should work in this repository |
 
-## Running Nuno (planned)
+## Running Nuno
 
-Not implemented yet. The intended deployment is a single container:
+One container next to the services it manages. See [`docs/deployment.md`](docs/deployment.md) for the whole of it, including the two Nextcloud preconditions that will otherwise waste an afternoon.
 
 ```yaml
 services:
@@ -110,6 +111,8 @@ services:
 
 It binds to localhost unless told otherwise and is meant to sit behind the same SSO or forward-auth layer as the rest of the stack. A static admin credential is supported so an unproxied deployment is never an unauthenticated one. Nuno does not implement login in the MVP.
 
+Start with `nuno doctor`, which checks every precondition and prints the command that fixes each failure.
+
 Nuno needs credentials that can actually write. On Nextcloud an app password is not enough: quota changes require `allowed_no_password_confirmation_ranges` or a dedicated admin without 2FA. On Immich an API key scoped to `adminUser.read` and `adminUser.update` is enough. `nuno doctor` proves it with a write probe against an account Nuno already manages, instead of discovering it mid-reconcile.
 
 ## Contributing
@@ -122,7 +125,7 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`AGENTS.md`](AGENTS.md). Issues an
 |---|---|
 | Nextcloud | 34.0.4 (OCS Provisioning API) |
 | Immich | v3.2.0 (admin API, major v3) |
-| LLDAP | v0.6.3 (LDAP read, not captured) |
+| LLDAP | v0.6.3 (LDAP read; mapping tested against scripted entries, not a captured response) |
 
 Nuno detects each provider's version and warns outside the supported major. It does not refuse to run on an untested minor.
 

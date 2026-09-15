@@ -22,7 +22,9 @@ func TestEverySourceFileCarriesTheSPDXIdentifier(t *testing.T) {
 	}
 
 	sourceExt := map[string]bool{".go": true, ".sql": true}
-	byName := map[string]bool{"Dockerfile": true, "docker-compose.yml": true, ".env.example": true}
+	byName := map[string]bool{"Dockerfile": true, ".env.example": true, "Makefile": true}
+	byPrefix := []string{"docker-compose"}
+	byExt := map[string]bool{".yml": true}
 	skipDir := map[string]bool{".git": true, "data": true, "vendor": true}
 
 	checked := 0
@@ -36,7 +38,18 @@ func TestEverySourceFileCarriesTheSPDXIdentifier(t *testing.T) {
 			}
 			return nil
 		}
-		if !sourceExt[filepath.Ext(d.Name())] && !byName[d.Name()] {
+		named := byName[d.Name()]
+		for _, prefix := range byPrefix {
+			if strings.HasPrefix(d.Name(), prefix) {
+				named = true
+			}
+		}
+		// Workflow files are source too: a license header is cheap and a
+		// missing one is the kind of thing nobody notices for a year.
+		if byExt[filepath.Ext(d.Name())] && strings.Contains(path, ".github/workflows") {
+			named = true
+		}
+		if !sourceExt[filepath.Ext(d.Name())] && !named {
 			return nil
 		}
 		content, err := os.ReadFile(path)

@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# The gate on every pull request: formatting, vet, and the unit and contract
+# tests. Integration tests are tagged and run elsewhere, because keeping a
+# live Immich and Nextcloud green is a recurring cost that would otherwise be
+# paid in abandoned tests (ARCHITECTURE section 10).
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "these files are not gofmt clean:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      # Includes the NFR-15 check that internal/core imports no other
+      # internal package, and the SPDX header check.
+      - name: test
+        run: go test -race ./...
+
+      - name: build
+        run: CGO_ENABLED=0 go build -trimpath ./cmd/nuno
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build the image
+        run: docker build --build-arg VERSION=ci -t nuno:ci .
+      - name: check the image size
+        # NFR-10 asks for under 200 MB, and the distroless build is an order
+        # of magnitude under it. A regression here means something pulled in
+        # a base image by accident.
+        run: |
+          size=$(docker image inspect nuno:ci --format '{{.Size}}')
+          limit=$((200 * 1024 * 1024))
+          echo "image is $((size / 1024 / 1024)) MB"
+          test "$size" -lt "$limit"
