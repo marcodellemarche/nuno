@@ -33,12 +33,12 @@ The provider claims in `ARCHITECTURE.md` are now verified against Nextcloud `sta
 
 Starting M1 surfaced three things the design had not settled, so they were decided first: ADR-0025 moves the write probe out of `Health()`, ADR-0026 gives the usage contract a representation for unknown, and ADR-0027 bounds what FR-75 can actually detect.
 
-- [ ] Project scaffold, `Dockerfile`, `docker-compose.yml`, `/healthz`, SPDX headers on every source file (`LICENSE` is already in the tree)
-- [ ] Config loading (env and file) with secret redaction; bind to localhost by default, optional admin password (NFR-4, NFR-11, NFR-14)
-- [ ] SQLite store, migrations, pre-migration backup, schema-version guard (NFR-2, FR-73)
-- [ ] Core model with tagged quota values; provider interface and registry; `internal/core` import check in CI (FR-25, FR-28, FR-29, NFR-15)
-- [ ] Nextcloud adapter: read-only health, list accounts, configured quota, usage with unknown detection, `NormalizeQuota` (FR-20, FR-22, FR-23)
-- [ ] Immich adapter: same read path, usage cross-checked against `/api/server/statistics` (FR-21, FR-22, FR-23)
+- [x] Project scaffold, `Dockerfile`, `docker-compose.yml`, `/healthz`, SPDX headers on every source file (`LICENSE` is already in the tree)
+- [x] Config loading (env and file) with secret redaction; bind to localhost by default, optional admin password (NFR-4, NFR-11, NFR-14)
+- [x] SQLite store, migrations, pre-migration backup, schema-version guard (NFR-2, FR-73)
+- [x] Core model with tagged quota values; provider interface and registry; `internal/core` import check in CI (FR-25, FR-28, FR-29, NFR-15)
+- [x] Nextcloud adapter: read-only health, list accounts, configured quota, usage with unknown detection, `NormalizeQuota` (FR-20, FR-22, FR-23)
+- [x] Immich adapter: same read path, usage cross-checked against `/api/server/statistics` (FR-21, FR-22, FR-23)
 - [ ] Identity sync from LLDAP: users and groups keyed on `entryuuid` (FR-1, FR-2, FR-9a)
 - [ ] Account linking: match keys including the OIDC subject, manual links, revalidation, unmanaged and orphan detection (FR-3, FR-6, FR-7, FR-8, FR-8a, FR-9, FR-9b)
 - [ ] Competing-writer detection, degrading the provider rather than blocking reads (FR-75)
@@ -48,7 +48,7 @@ Starting M1 surfaced three things the design had not settled, so they were decid
 - [ ] Scheduled read-only usage refresh (FR-48)
 - [ ] `GET /api/v1/usage` with an admin key from `NUNO_ADMIN_KEY`, and a plain aggregated HTML page (FR-40, FR-41, FR-42, FR-45, FR-46, FR-46a, FR-47, FR-50)
 - [ ] The page degrades instead of crashing when a provider or a credential is missing (FR-55)
-- [ ] CLI: `nuno providers health`, `nuno usage`, `nuno accounts`, `nuno link`, `nuno unlink` (FR-70a, FR-74)
+- [ ] CLI: `nuno usage`, `nuno accounts`, `nuno link`, `nuno unlink`, and the client mode that talks to a running server (FR-70a, FR-74). `nuno providers health` already works, offline only
 
 Precondition, not code: the target Nextcloud must move its default from `oidc_login_default_quota` to `files/default_quota` first, and it has not yet (`tests/fixtures/nextcloud-write-probe.json` records it set to `25 GB`). Nuno cannot do this itself (it is a system config, reachable only through `occ`, and reaching `occ` would mean root on the host: see [ADR-0023](docs/decisions.md#adr-0023-nuno-diagnoses-it-does-not-reconfigure-the-services-it-manages)), and it cannot even read it, so `nuno doctor --fix` emits a script that checks and moves it. FR-75's degradation gate covers the two `user_ldap` settings, which OCS does expose: see [ADR-0027](docs/decisions.md#adr-0027-a-competing-writer-nuno-cannot-see).
 

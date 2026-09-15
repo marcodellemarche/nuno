@@ -1,6 +1,6 @@
 # Nuno
 
-> Status: pre-alpha. The design is frozen and every decision is recorded, but nothing is implemented yet. This repository holds the specification we build against.
+> Status: pre-alpha, M1 in progress. The design is frozen and every decision is recorded. What runs today: the scaffold and container, configuration, the SQLite store with migrations, and both provider adapters in read-only form, with `nuno providers health` to exercise them. Nothing writes to a provider yet.
 
 Nuno is a quota and usage control plane for self-hosted service stacks.
 

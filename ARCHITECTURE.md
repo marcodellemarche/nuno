@@ -1,6 +1,6 @@
 # Architecture
 
-> Design document. Nothing here is implemented yet. Every decision it rests on is recorded in [`docs/decisions.md`](docs/decisions.md). Changing something here means writing an ADR first.
+> Design document. Implementation started with M1 and follows it; where the two disagree, this document is the one that is wrong and gets an ADR. Every decision it rests on is recorded in [`docs/decisions.md`](docs/decisions.md). Changing something here means writing an ADR first.
 
 ## 1. Shape of the system
 

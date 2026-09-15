@@ -27,9 +27,10 @@ Usage:
   nuno <command>
 
 Commands:
-  serve      run the server: migrate, then listen
-  migrate    apply pending database migrations and exit
-  version    print the version
+  serve               run the server: migrate, then listen
+  migrate             apply pending database migrations and exit
+  providers health    read each provider: reachable, version, credential
+  version             print the version
 
 Configuration is read from the environment, and from the env-style file named
 by NUNO_CONFIG when it is set. See .env.example.
@@ -56,10 +57,38 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return withApp(stderr, serve)
 	case "migrate":
 		return withApp(stderr, migrateOnly)
+	case "providers":
+		if len(args) < 2 || args[1] != "health" {
+			fmt.Fprintf(stderr, "nuno: usage: nuno providers health\n")
+			return ExitConfig
+		}
+		return withConfig(stderr, func(ctx context.Context, cfg *config.Config, log *slog.Logger, instances []providerInstance) int {
+			return providersHealth(ctx, stdout, instances)
+		})
 	default:
 		fmt.Fprintf(stderr, "nuno: unknown command %q\n\n%s", command, usage)
 		return ExitConfig
 	}
+}
+
+// withConfig loads configuration and builds the providers, without opening
+// the database. A command that only reads providers needs no schema and no
+// run lock.
+func withConfig(stderr io.Writer, fn func(context.Context, *config.Config, *slog.Logger, []providerInstance) int) int {
+	cfg, log, code := loadConfig(stderr)
+	if cfg == nil {
+		return code
+	}
+	registry, err := buildRegistry()
+	if err != nil {
+		log.Error("build the provider registry", "error", err)
+		return ExitConfig
+	}
+	instances := buildProviders(cfg, registry, log)
+
+	ctx, stop := signalContext()
+	defer stop()
+	return fn(ctx, cfg, log, instances)
 }
 
 // app is what every command that touches state needs.
@@ -73,28 +102,10 @@ type app struct {
 // reach the migration path, so every other command will call CheckSchema
 // instead (FR-73, ADR-0018).
 func withApp(stderr io.Writer, fn func(context.Context, *app) int) int {
-	env, err := config.Resolve()
-	if err != nil {
-		fmt.Fprintf(stderr, "nuno: %v\n", err)
-		return ExitConfig
+	cfg, log, code := loadConfig(stderr)
+	if cfg == nil {
+		return code
 	}
-	cfg, err := config.Load(env)
-	if err != nil {
-		// Every configuration problem at once, so one pass fixes all of them.
-		for _, line := range strings.Split(err.Error(), "\n") {
-			fmt.Fprintf(stderr, "nuno: config: %s\n", line)
-		}
-		return ExitConfig
-	}
-
-	log := newLogger(cfg.LogLevel)
-	log.Info("nuno starting",
-		"version", version,
-		"addr", cfg.Addr,
-		"data_dir", cfg.DataDir,
-		"providers", providerNames(cfg),
-	)
-	warnOnMissingCredentials(cfg, log)
 
 	db, err := store.Open(filepath.Join(cfg.DataDir, "nuno.db"))
 	if err != nil {
@@ -107,6 +118,33 @@ func withApp(stderr io.Writer, fn func(context.Context, *app) int) int {
 	defer stop()
 
 	return fn(ctx, &app{cfg: cfg, log: log, db: db})
+}
+
+// loadConfig resolves the environment and reports every problem at once, so
+// one pass fixes all of them. A nil config means the code is the answer.
+func loadConfig(stderr io.Writer) (*config.Config, *slog.Logger, int) {
+	env, err := config.Resolve()
+	if err != nil {
+		fmt.Fprintf(stderr, "nuno: %v\n", err)
+		return nil, nil, ExitConfig
+	}
+	cfg, err := config.Load(env)
+	if err != nil {
+		for _, line := range strings.Split(err.Error(), "\n") {
+			fmt.Fprintf(stderr, "nuno: config: %s\n", line)
+		}
+		return nil, nil, ExitConfig
+	}
+
+	log := newLogger(cfg.LogLevel)
+	log.Info("nuno starting",
+		"version", version,
+		"addr", cfg.Addr,
+		"data_dir", cfg.DataDir,
+		"providers", providerNames(cfg),
+	)
+	warnOnMissingCredentials(cfg, log)
+	return cfg, log, ExitClean
 }
 
 func migrateOnly(ctx context.Context, a *app) int {
