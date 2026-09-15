@@ -97,28 +97,37 @@ With forward auth in front, leave `NUNO_ADMIN_PASSWORD` unset. Without it, set o
 
 `GET /api/v1/usage` is the contract a shared dashboard consumes. For Homepage:
 
+A shared dashboard is seen by everyone behind the proxy, and the widget is
+fetched server-side with one key, so it cannot show "only my row". The
+default is therefore the aggregate per service, which names nobody:
+
 ```yaml
 - Storage:
     - Quotas:
         icon: mdi-harddisk
         widget:
           type: customapi
-          # with_accounts=1 drops the service accounts in the directory, which
-          # have no quota anywhere. Without it the widget lists them too.
-          url: http://nuno:8080/api/v1/usage?with_accounts=1
+          url: http://nuno:8080/api/v1/usage?detail=service
           method: GET
           headers:
             Authorization: Bearer {{HOMEPAGE_VAR_NUNO_KEY}}
           display: dynamic-list
           mappings:
-            items: users
-            name: user
-            label: used_percent
-            format: percent
+            items: rows
+            name: name
+            label: summary
+            target: https://nuno.example.org   # the admin UI, for the detail
 ```
 
-The list is sorted by `user_uuid`, which is stable, so a person keeps their
-row. `used_percent` is empty for an unlimited ceiling.
+`summary` is one string, because the widget renders one label per row:
+`42.7 GiB / 300 GiB (14.2%)`. The ceiling is the sum of the people's ceilings,
+which answers "how much of what we allocated is used", not the disk capacity.
+
+Two other modes exist. `?detail=provider` is one row per person and provider,
+for a dashboard only admins see. The plain response without `detail` is the
+nested contract, with `with_accounts=1` to drop the service accounts in the
+directory. None of them shows only the caller, because a Homepage `customapi`
+widget has no idea who is looking at it.
 
 Read `status` before reading a number. A `quota_bytes` of `null` means unlimited under `ok` and `stale`, and means nothing at all under `unknown` or `unavailable`, where the read succeeded but the values did not. A user entry also carries `complete`, which is false when one of that person's services contributed nothing, so the totals are partial ([ADR-0026](decisions.md#adr-0026-the-usage-contract-needs-a-name-for-unknown)).
 

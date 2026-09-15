@@ -303,3 +303,54 @@ func TestTheSerializedShapeIsTheContract(t *testing.T) {
 		}
 	}
 }
+
+// A Homepage widget renders one label per row and cannot join two fields, so
+// the API carries used, ceiling and share in one string.
+func TestSummaryIsOneStringWithBytesAndShare(t *testing.T) {
+	response := BuildUsage(input(owned(10, 1, MustBytes(53687091200), MustBytes(1073741824))))
+	want := FormatIEC(1073741824) + " / " + FormatIEC(53687091200) + " (2.0%)"
+	alice := response.Users[0]
+	if alice.Summary != want {
+		t.Errorf("user summary = %q, want %q", alice.Summary, want)
+	}
+	if got := alice.Providers[0].Summary; got != want {
+		t.Errorf("provider summary = %q, want %q", got, want)
+	}
+}
+
+func TestSummaryNamesUnlimitedAndUnknown(t *testing.T) {
+	unlimited := BuildUsage(input(owned(10, 1, Unlimited(), MustBytes(1073741824)))).Users[0].Providers[0]
+	if want := FormatIEC(1073741824) + " (unlimited)"; unlimited.Summary != want {
+		t.Errorf("unlimited summary = %q, want %q", unlimited.Summary, want)
+	}
+	unknown := BuildUsage(input(owned(10, 1, Unknown(), MustBytes(1073741824)))).Users[0].Providers[0]
+	if unknown.Summary != "unknown" {
+		t.Errorf("unknown summary = %q, want unknown", unknown.Summary)
+	}
+}
+
+// A shared dashboard shows services, not people: the aggregate carries the
+// totals and no name of anyone.
+func TestBuildUsageByServiceAggregatesAcrossPeople(t *testing.T) {
+	response := BuildUsage(input(
+		owned(20, 1, MustBytes(161061273600), MustBytes(10737418240)),
+		owned(20, 2, MustBytes(161061273600), MustBytes(21474836480)),
+		owned(10, 1, MustBytes(53687091200), MustBytes(1073741824)),
+	))
+	detail := BuildUsageByService(response)
+	if len(detail.Rows) != 2 {
+		t.Fatalf("rows = %+v, want one per service", detail.Rows)
+	}
+	if detail.Rows[0].Name != "Immich" || detail.Rows[1].Name != "Nextcloud" {
+		t.Fatalf("rows = %+v, want Immich then Nextcloud", detail.Rows)
+	}
+	want := FormatIEC(32212254720) + " / " + FormatIEC(322122547200) + " (10.0%)"
+	if detail.Rows[0].Summary != want {
+		t.Errorf("immich summary = %q, want %q", detail.Rows[0].Summary, want)
+	}
+	for _, row := range detail.Rows {
+		if strings.Contains(row.Name, "alice") || strings.Contains(row.Name, "bob") {
+			t.Errorf("an aggregate must not name a person: %+v", row)
+		}
+	}
+}

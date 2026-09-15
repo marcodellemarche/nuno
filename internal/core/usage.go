@@ -3,7 +3,9 @@
 package core
 
 import (
+	"fmt"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -48,6 +50,10 @@ type UsageUser struct {
 	// contributed no ceiling or no usage, so the sums above are partial.
 	Complete bool `json:"complete"`
 
+	// Summary is a human string for a dashboard widget, which cannot join two
+	// fields into one label: "9.3 GiB / 200 GiB (4.6%)".
+	Summary string `json:"summary"`
+
 	Providers []UsageProvider `json:"providers"`
 }
 
@@ -69,6 +75,24 @@ type UsageProvider struct {
 	Managed    bool      `json:"managed"`
 	Status     string    `json:"status"`
 	ObservedAt time.Time `json:"observed_at"`
+
+	// Summary is the same human string as the user's, per provider.
+	Summary string `json:"summary"`
+}
+
+// UsageRow is one line of the flattened view, which is what a Homepage
+// dynamic-list can render: a flat array of name and label. The nested shape is
+// the contract; this is the same data arranged for a widget that cannot walk
+// into an array of arrays.
+type UsageRow struct {
+	Name    string `json:"name"`
+	Summary string `json:"summary"`
+	Status  string `json:"status"`
+}
+
+type UsageDetailResponse struct {
+	Schema int        `json:"schema"`
+	Rows   []UsageRow `json:"rows"`
 }
 
 // ObservedProvider is a provider instance plus whether its last read worked.
@@ -209,6 +233,10 @@ func BuildUsage(in UsageInput) UsageResponse {
 		total := used
 		entry.UsedBytes = &total
 		entry.UsedPercent = percent(entry.UsedBytes, entry.BudgetBytes)
+		entry.Summary = summarize(entry.UsedBytes, entry.BudgetBytes)
+		if !entry.Complete {
+			entry.Summary += " (partial)"
+		}
 
 		response.Users = append(response.Users, entry)
 	}
@@ -238,6 +266,7 @@ func usageFor(in UsageInput, provider ObservedProvider, account ExternalAccount,
 	}
 	if view.Status != StatusOK && view.Status != StatusStale {
 		// The numbers mean nothing, so they are not reported at all.
+		view.Summary = view.Status
 		return view
 	}
 
@@ -250,7 +279,124 @@ func usageFor(in UsageInput, provider ObservedProvider, account ExternalAccount,
 		view.UsedBytes = &used
 	}
 	view.UsedPercent = percent(view.UsedBytes, view.QuotaBytes)
+	view.Summary = summarize(view.UsedBytes, view.QuotaBytes)
 	return view
+}
+
+// summarize is the one human string a widget can render: used, ceiling and the
+// share, in one label. A nil ceiling is unlimited, a nil used is unknown.
+func summarize(used, ceiling *int64) string {
+	switch {
+	case used == nil:
+		return "unknown"
+	case ceiling == nil:
+		return FormatIEC(*used) + " (unlimited)"
+	case *ceiling <= 0:
+		return FormatIEC(*used)
+	default:
+		share := float64(*used) / float64(*ceiling) * 100
+		return fmt.Sprintf("%s / %s (%.1f%%)", FormatIEC(*used), FormatIEC(*ceiling), share)
+	}
+}
+
+// BuildUsageDetail flattens the response into rows a Homepage dynamic-list can
+// render: one total row per person, then one row per provider. The name carries
+// the person and, for a provider row, the service, because the widget shows a
+// single name field.
+func BuildUsageDetail(response UsageResponse) UsageDetailResponse {
+	detail := UsageDetailResponse{Schema: response.Schema, Rows: make([]UsageRow, 0, len(response.Users))}
+	for _, user := range response.Users {
+		status := StatusOK
+		if !user.Complete {
+			status = "partial"
+		}
+		detail.Rows = append(detail.Rows, UsageRow{Name: user.User, Summary: user.Summary, Status: status})
+		for _, provider := range user.Providers {
+			detail.Rows = append(detail.Rows, UsageRow{
+				Name:    user.User + " \u00b7 " + titleCase(provider.Type),
+				Summary: provider.Summary,
+				Status:  provider.Status,
+			})
+		}
+	}
+	return detail
+}
+
+func titleCase(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// BuildUsageByService aggregates the response per provider type, so a shared
+// dashboard can show how full each service is without exposing who used what.
+// The ceiling is the sum of the people's ceilings, which is a policy number,
+// not the disk capacity: it answers "how much of what we allocated is used".
+// Unmanaged accounts are not counted, because they belong to nobody.
+func BuildUsageByService(response UsageResponse) UsageDetailResponse {
+	type total struct {
+		used      int64
+		quota     int64
+		unlimited bool
+		known     bool
+		partial   bool
+	}
+	byType := map[string]*total{}
+	var order []string
+	for _, user := range response.Users {
+		for _, p := range user.Providers {
+			t, seen := byType[p.Type]
+			if !seen {
+				t = &total{}
+				byType[p.Type] = t
+				order = append(order, p.Type)
+			}
+			if p.Status != StatusOK && p.Status != StatusStale {
+				t.partial = true
+				continue
+			}
+			t.known = true
+			if p.UsedBytes != nil {
+				t.used += *p.UsedBytes
+			}
+			if p.QuotaBytes == nil {
+				t.unlimited = true
+			} else {
+				t.quota += *p.QuotaBytes
+			}
+		}
+	}
+	slices.Sort(order)
+
+	rows := make([]UsageRow, 0, len(order))
+	for _, typ := range order {
+		t := byType[typ]
+		status := StatusOK
+		if t.partial {
+			status = "partial"
+		}
+		rows = append(rows, UsageRow{
+			Name:    titleCase(typ),
+			Summary: summarizeTotal(t.used, t.quota, t.unlimited, t.known),
+			Status:  status,
+		})
+	}
+	return UsageDetailResponse{Schema: response.Schema, Rows: rows}
+}
+
+func summarizeTotal(used, quota int64, unlimited, known bool) string {
+	switch {
+	case !known:
+		return "unknown"
+	case unlimited:
+		return FormatIEC(used) + " (unlimited)"
+	case quota <= 0:
+		return FormatIEC(used)
+	default:
+		share := float64(used) / float64(quota) * 100
+		return fmt.Sprintf("%s / %s (%.1f%%)", FormatIEC(used), FormatIEC(quota), share)
+	}
 }
 
 func statusFor(in UsageInput, provider ObservedProvider, account ExternalAccount) string {

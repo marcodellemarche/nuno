@@ -200,6 +200,29 @@ func TestUsageWithAccountsDropsPeopleWhoHaveNone(t *testing.T) {
 	}
 }
 
+// detail=service is what the shared dashboard uses: totals per service, with
+// no person named.
+func TestUsageDetailServiceAggregates(t *testing.T) {
+	mux := routes(t, populated(), "")
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/usage?detail=service", nil)
+	req.Header.Set("Authorization", "Bearer good-key")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d: %s", rec.Code, rec.Body.String())
+	}
+	var response core.UsageDetailResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Rows) != 1 || response.Rows[0].Name != "Nextcloud" {
+		t.Fatalf("rows = %+v, want one Nextcloud row", response.Rows)
+	}
+	if !strings.Contains(response.Rows[0].Summary, "/") {
+		t.Errorf("summary = %q, want used and ceiling in one string", response.Rows[0].Summary)
+	}
+}
+
 func usageUsers(t *testing.T, s Store, path string) []core.UsageUser {
 	t.Helper()
 	mux := routes(t, s, "")

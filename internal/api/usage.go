@@ -86,7 +86,21 @@ func usageHandler(opts Options, limit *limiter) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
-		if err := json.NewEncoder(w).Encode(response); err != nil {
+
+		// detail=provider flattens the nested shape into one row per person and
+		// provider, which is what a Homepage dynamic-list can render: it shows a
+		// single name and a single label per row, and cannot walk into an array
+		// of arrays.
+		var payload any = response
+		switch r.URL.Query().Get("detail") {
+		case "provider":
+			payload = core.BuildUsageDetail(response)
+		case "service":
+			// Aggregated per service, so a shared dashboard does not show one
+			// person's quota to another.
+			payload = core.BuildUsageByService(response)
+		}
+		if err := json.NewEncoder(w).Encode(payload); err != nil {
 			opts.Log.Error("usage: write response", "error", err)
 		}
 	}
