@@ -85,7 +85,9 @@ Done when changing a tier in the UI fixes both services, the second run is empty
 - [x] Documentation: deployment, the Nextcloud credential requirement, the conflicting-writer preconditions, the Homepage widget snippet, "known to work with"
 - [x] CI (gofmt, vet, race tests, build, image size against NFR-10) and publish on a tag to ghcr.io
 
-Done when tagged `v0.1.0`, with a published image, used by our own homelab. What stands between here and that tag: the integration run has never been executed (the stack does not run on the development machine), the Immich write path is still only exercised against recorded and fake responses, and the module path assumes an org that may not be the real one.
+Done when tagged `v0.1.0`, with a published image, used by our own homelab.
+
+On 2026-09-15 it was exercised against a live stack (Nextcloud 34.0.4, Immich v3.2.0, LLDAP v0.6.3) rather than only against fixtures: `doctor`, `observe`, `accounts`, `usage` and `plan`, plus the write probe on **both** providers, which is a real no-op write. That covers the read path and the Immich write path, which the roadmap previously listed as untested. What remains: the automated integration suite (`make integration`, the weekly job) has still not been run, so its first green run is still ahead, and the integration images still need pinning to digests. The module path is confirmed: the repository is `github.com/marcodellemarche/nuno`.
 
 ## Post-v0.1 candidates
 
