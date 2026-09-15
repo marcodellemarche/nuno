@@ -143,15 +143,24 @@ is for:
         widget:
           type: iframe
           name: quota
-          src: https://nuno.example.org/me
+          src: https://dashboard.example.org/me
 ```
 
+The URL is under the **dashboard's own origin**, not the admin one, and the
+proxy routes `/me` to Nuno. That matters when the dashboard is reachable more
+widely than the admin UI: a family member who is not on the VPN can open the
+dashboard, and an iframe pointing at a private name like `nuno.example.org`
+would simply not load for them. The path rides whatever access the dashboard
+already has.
+
 `/me` reads `Remote-User`, the header forward auth sets, and renders that
-person's own per-provider summary. It believes the header **only when the
-request arrives from `NUNO_TRUSTED_PROXY`**, the network the proxy runs on, and
-with nothing configured it believes nobody and answers 403. It is not behind
-the admin password, because the person reading it is not an admin; the proxy is
-what authenticates them.
+person's own per-provider summary. `NUNO_TRUSTED_PROXY` names the network the
+**proxy** runs on, not the user's: the browser always talks to the proxy, and
+the proxy always talks to Nuno, so the check is about who may set the header,
+never about where the person is. It believes the header **only from that
+network**, and with nothing configured it believes nobody and answers 403. It
+is not behind the admin password, because the person reading it is not an
+admin; the proxy is what authenticates them.
 
 Read `status` before reading a number. A `quota_bytes` of `null` means unlimited under `ok` and `stale`, and means nothing at all under `unknown` or `unavailable`, where the read succeeded but the values did not. A user entry also carries `complete`, which is false when one of that person's services contributed nothing, so the totals are partial ([ADR-0026](decisions.md#adr-0026-the-usage-contract-needs-a-name-for-unknown)).
 
