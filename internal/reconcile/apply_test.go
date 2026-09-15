@@ -407,3 +407,99 @@ func (t *throttlingProvider) SetQuota(context.Context, string, core.Quota) error
 type limitedProvider struct{ fake }
 
 func (l *limitedProvider) WriteLimit() (int, time.Duration) { return 50, 10 * time.Minute }
+
+// After a write, a plan computed before the next observe must not propose the
+// same change again. The applier has just read back what the provider stored,
+// so it knows.
+func TestApplyRecordsWhatTheProviderStored(t *testing.T) {
+	ctx := context.Background()
+	provider := &persistingProvider{fake: fake{typ: "nextcloud",
+		accounts: []core.Account{account("nc-alice", "alice@example.org")}}}
+	h, instances := applyHarness(t, provider, core.MustBytes(50<<30))
+
+	plan := planNow(t, h, instances)
+	report, err := h.engine.Apply(ctx, instances, plan, ApplyOptions{Actor: "test", ComputedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Applied != 1 {
+		t.Fatalf("report = %+v", report)
+	}
+
+	// No observe in between: this is what `nuno plan` does right after a
+	// reconcile, and it used to lie.
+	again := planNow(t, h, instances)
+	if !again.Empty() {
+		t.Fatalf("plan right after applying = %+v, want empty", again.Changes)
+	}
+
+	stored, err := h.db.ListExternalAccounts(ctx, instances[0].Row.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stored[0].Quota.Equal(core.MustBytes(50 << 30)) {
+		t.Errorf("stored quota = %v, want what the provider reports now", stored[0].Quota)
+	}
+	if stored[0].UserID == nil {
+		t.Error("refreshing an account must keep its owner, or it becomes unmanaged")
+	}
+}
+
+// A write that lands but cannot be read back leaves the state unknown, which
+// stops the next change rather than inviting a guess.
+func TestApplyMarksTheAccountUnknownWhenItCannotReadBack(t *testing.T) {
+	ctx := context.Background()
+	provider := &blindAfterWrite{fake: fake{typ: "nextcloud",
+		accounts: []core.Account{account("nc-alice", "alice@example.org")}}}
+	h, instances := applyHarness(t, provider, core.MustBytes(50<<30))
+
+	plan := planNow(t, h, instances)
+	report, err := h.engine.Apply(ctx, instances, plan, ApplyOptions{Actor: "test", ComputedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Applied != 1 {
+		t.Fatalf("the write did land: %+v", report)
+	}
+
+	again := planNow(t, h, instances)
+	if len(again.Changes) != 1 || again.Changes[0].Class != core.ClassUnknownState {
+		t.Fatalf("plan = %+v, want the account marked unknown state", again.Changes)
+	}
+	if len(again.Applicable(true)) != 0 {
+		t.Error("nothing may be written against it until a read succeeds")
+	}
+}
+
+// persistingProvider remembers writes, the way a real provider does.
+type persistingProvider struct{ fake }
+
+func (p *persistingProvider) SetQuota(ctx context.Context, id string, q core.Quota) error {
+	if err := p.fake.SetQuota(ctx, id, q); err != nil {
+		return err
+	}
+	for i := range p.accounts {
+		if p.accounts[i].ExternalID == id {
+			p.accounts[i].Quota = q
+		}
+	}
+	return nil
+}
+
+// blindAfterWrite accepts the write and then cannot be read.
+type blindAfterWrite struct {
+	fake
+	written bool
+}
+
+func (b *blindAfterWrite) SetQuota(ctx context.Context, id string, q core.Quota) error {
+	b.written = true
+	return b.fake.SetQuota(ctx, id, q)
+}
+
+func (b *blindAfterWrite) GetAccount(ctx context.Context, id string) (core.Account, error) {
+	if b.written {
+		return core.Account{}, &core.UnreachableError{Provider: "nextcloud", Err: context.DeadlineExceeded}
+	}
+	return b.fake.GetAccount(ctx, id)
+}

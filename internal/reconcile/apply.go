@@ -218,6 +218,12 @@ func (e *Engine) Apply(ctx context.Context, instances []Instance, plan core.Plan
 		e.log.Info("quota applied",
 			"user", change.UserUID, "provider", change.Provider,
 			"from", change.From.String(), "to", change.To.String(), "run", runID)
+
+		// Read back what the provider really stored and record it. A write is
+		// the one moment Nuno knows a value changed, and not recording it
+		// would leave the next plan proposing the same change and the page
+		// showing a ceiling that is gone.
+		e.refreshAfterWrite(ctx, instance, change)
 	}
 
 	e.notifyOutcome(ctx, plan, report, opts)
@@ -394,5 +400,31 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 		return ctx.Err()
 	case <-timer.C:
 		return nil
+	}
+}
+
+func (e *Engine) refreshAfterWrite(ctx context.Context, instance Instance, change core.Change) {
+	written, err := instance.Provider.GetAccount(ctx, change.ExternalID)
+	if err != nil {
+		// The write landed but the state is now unknown, which is exactly
+		// what must stop the next change against this account rather than
+		// being guessed at.
+		e.log.Warn("wrote successfully but could not read the account back, so its state is unknown until the next observe",
+			"provider", change.Provider, "account", change.ExternalID, "error", err)
+		if markErr := e.db.MarkAccountUnobserved(ctx, change.ProviderID, change.ExternalID); markErr != nil {
+			e.log.Error("mark the account unobserved", "error", markErr)
+		}
+		return
+	}
+	if err := e.db.UpdateObservedAccount(ctx, change.ProviderID, written, e.now().UTC()); err != nil {
+		e.log.Error("record the account after a write", "error", err)
+	}
+	if !written.Quota.Equal(change.To) {
+		// Normalization should have accounted for this. If it did not, the
+		// planner would loop, so it is worth a loud line rather than a
+		// silent difference.
+		e.log.Warn("the provider stored something other than what was written, which NormalizeQuota did not predict",
+			"provider", change.Provider, "account", change.ExternalID,
+			"wrote", change.To.String(), "stored", written.Quota.String())
 	}
 }

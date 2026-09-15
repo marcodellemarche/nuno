@@ -269,3 +269,47 @@ func (db *DB) ListLinkIssues(ctx context.Context) ([]core.LinkIssue, error) {
 	}
 	return issues, rows.Err()
 }
+
+// UpdateObservedAccount refreshes one account's observed state, keeping its
+// owner. The applier calls it after a successful write, because it has just
+// read back what the provider really stored: without this, a plan computed
+// before the next observe would propose the same change again, and the page
+// would show a ceiling that is no longer there.
+func (db *DB) UpdateObservedAccount(ctx context.Context, providerID int64, account core.Account, observedAt time.Time) error {
+	if account.ExternalID == "" {
+		return fmt.Errorf("provider %d: an account with no external id", providerID)
+	}
+	if err := account.Quota.Valid(); err != nil {
+		return err
+	}
+	if err := account.Used.ValidAsUsage(); err != nil {
+		return err
+	}
+	at := account.ObservedAt
+	if at.IsZero() {
+		at = observedAt
+	}
+
+	_, err := db.W.ExecContext(ctx,
+		`UPDATE external_accounts SET
+		   subject = ?, username = ?, email = ?, email_normalized = ?,
+		   enabled = ?, deleted = ?, quota = ?, used = ?, never_used = ?,
+		   observed_at = ?, observe_ok = 1
+		 WHERE provider_id = ? AND external_id = ?`,
+		account.Subject, account.Username, account.Email, core.NormalizeEmail(account.Email),
+		boolToInt(account.Enabled), boolToInt(account.Deleted),
+		account.Quota.Encode(), account.Used.Encode(), boolToInt(account.NeverUsed),
+		formatTime(at), providerID, account.ExternalID)
+	return err
+}
+
+// MarkAccountUnobserved says the stored values for one account can no longer
+// be trusted, which makes every change against it unknown-state until a read
+// succeeds. It is what an applier does when it wrote successfully but could
+// not read back.
+func (db *DB) MarkAccountUnobserved(ctx context.Context, providerID int64, externalID string) error {
+	_, err := db.W.ExecContext(ctx,
+		`UPDATE external_accounts SET observe_ok = 0 WHERE provider_id = ? AND external_id = ?`,
+		providerID, externalID)
+	return err
+}
