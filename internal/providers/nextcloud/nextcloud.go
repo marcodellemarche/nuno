@@ -365,3 +365,104 @@ func uuidLike(s string) bool {
 	}
 	return true
 }
+
+const pathAppConfig = "/ocs/v2.php/apps/provisioning_api/api/v1/config/apps"
+
+// competingKeys are the user_ldap settings that rewrite a quota on every user
+// refresh. They live in app config, which OCS does expose, so these are
+// detected for real (FR-75).
+var competingKeys = []string{"ldapQuotaAttribute", "ldapQuotaDefault"}
+
+// CompetingWriters reads what OCS lets it read. user_ldap prefixes its keys
+// with a configuration id, for example s01ldapQuotaAttribute, so the match is
+// on the suffix.
+func (p *Provider) CompetingWriters(ctx context.Context) ([]core.CompetingWriter, error) {
+	raw, err := p.client.get(ctx, pathAppConfig+"/user_ldap")
+	if err != nil {
+		// user_ldap not being installed is the common case and is not a
+		// problem: there is nothing to fight over.
+		var provErr *core.ProviderError
+		if errors.As(err, &provErr) && provErr.Status == 404 {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var payload struct {
+		Data []string `json:"data"`
+		Keys []string `json:"keys"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		// Some versions answer {"data":[...]} and some {"keys":[...]}. A
+		// shape neither of those is not something to guess at.
+		return nil, &core.ProviderError{
+			Provider: providerType, Op: "GET " + pathAppConfig + "/user_ldap",
+			Message: "app config did not decode", Err: err,
+		}
+	}
+	keys := payload.Data
+	if len(keys) == 0 {
+		keys = payload.Keys
+	}
+
+	var found []core.CompetingWriter
+	for _, key := range keys {
+		for _, competing := range competingKeys {
+			if !strings.HasSuffix(key, competing) {
+				continue
+			}
+			value, err := p.appConfigValue(ctx, "user_ldap", key)
+			if err != nil {
+				return found, err
+			}
+			if strings.TrimSpace(value) == "" {
+				continue
+			}
+			found = append(found, core.CompetingWriter{
+				Setting: key,
+				Value:   value,
+				Detail:  "user_ldap rewrites the quota from the directory on every user refresh, so a value Nuno sets does not survive",
+				Remedy: []string{
+					fmt.Sprintf("occ ldap:set-config s01 %s ''", competing),
+				},
+			})
+		}
+	}
+	return found, nil
+}
+
+// UndetectableWriters is the honest half of FR-75. oidc_login_default_quota is
+// a Nextcloud system config and OCS exposes app config only, so no read can
+// answer it and no startup check may pretend to. See ADR-0027.
+func (p *Provider) UndetectableWriters() []core.CompetingWriter {
+	return []core.CompetingWriter{{
+		Setting: "oidc_login_default_quota",
+		Detail:  "oidc_login writes this quota on every OIDC login with no check on the current value, so an admin's quota survives only until that person's next browser login. OCS cannot read system config, so Nuno cannot see whether it is set",
+		Remedy: []string{
+			"occ config:system:get oidc_login_default_quota",
+			"occ config:system:delete oidc_login_default_quota",
+			"occ config:app:set files default_quota --value='25 GB'",
+		},
+	}}
+}
+
+func (p *Provider) appConfigValue(ctx context.Context, app, key string) (string, error) {
+	raw, err := p.client.get(ctx, pathAppConfig+"/"+url.PathEscape(app)+"/"+url.PathEscape(key))
+	if err != nil {
+		return "", err
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err == nil {
+		return value, nil
+	}
+	var wrapped struct {
+		Data string `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &wrapped); err != nil {
+		return "", &core.ProviderError{
+			Provider: providerType, Op: "read " + app + "/" + key,
+			Message: "app config value did not decode", Err: err,
+		}
+	}
+	return wrapped.Data, nil
+}

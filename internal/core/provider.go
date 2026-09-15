@@ -123,3 +123,34 @@ func (w WriteAccess) String() string {
 	}
 	return fmt.Sprintf("WriteAccess(%d)", uint8(w))
 }
+
+// CompetingWriter is another component that writes the same quotas. Nuno
+// refuses to apply against an instance where one is present, naming the
+// remedy, while reading continues (FR-75).
+type CompetingWriter struct {
+	// Setting names it, for example oidc_login_default_quota.
+	Setting string
+	// Value is what it is set to, empty when the setting exists but is blank.
+	Value string
+	// Detail says what it does behind Nuno's back.
+	Detail string
+	// Remedy is the exact command that fixes it, which is what doctor prints
+	// and what `doctor --fix` emits as a script (ADR-0027).
+	Remedy []string
+}
+
+// WriterDetector is an optional capability. An adapter implements it when the
+// service exposes enough to answer the question; the caller type-asserts for
+// it rather than every provider carrying a method it cannot honour.
+//
+// It reports only what the API actually exposes. A setting a service keeps out
+// of reach is diagnosed by the script doctor emits, never guessed at, and
+// never claimed as a startup check (ADR-0027).
+type WriterDetector interface {
+	CompetingWriters(ctx context.Context) ([]CompetingWriter, error)
+
+	// UndetectableWriters are the ones this adapter cannot see, with the
+	// command that would show them. They are reported as unknown rather than
+	// as absent.
+	UndetectableWriters() []CompetingWriter
+}

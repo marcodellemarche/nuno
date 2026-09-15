@@ -32,7 +32,9 @@ Commands:
   serve               run the server: migrate, then listen
   migrate             apply pending database migrations and exit
   providers health    read each provider: reachable, version, credential
+  doctor              check every precondition, with the command that fixes each one
   observe             sync the directory and read every provider, writing nothing
+  usage               show usage per person and per service
   accounts            list observed accounts, who owns them, and what needs a decision
   users               list, add or remove people who exist in no directory
   link                link a person to an account explicitly
@@ -64,8 +66,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return withAppMigrating(stderr, serve)
 	case "migrate":
 		return withAppMigrating(stderr, migrateOnly)
+	case "doctor":
+		return withApp(stderr, func(ctx context.Context, a *app) int { return doctor(ctx, a, args[1:], stdout) })
 	case "observe":
 		return withApp(stderr, func(ctx context.Context, a *app) int { return observeOnce(ctx, a, stdout) })
+	case "usage":
+		return withApp(stderr, func(ctx context.Context, a *app) int { return showUsage(ctx, a, stdout) })
 	case "accounts":
 		return withApp(stderr, func(ctx context.Context, a *app) int { return listAccounts(ctx, a, stdout) })
 	case "users":

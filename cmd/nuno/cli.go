@@ -323,3 +323,94 @@ func listUsers(ctx context.Context, a *app, stdout io.Writer) int {
 	table.Flush()
 	return ExitClean
 }
+
+// showUsage prints the same picture the page and the endpoint show, for a
+// terminal. The three read from one domain function, so they cannot disagree.
+func showUsage(ctx context.Context, a *app, stdout io.Writer) int {
+	users, err := a.db.ListUsers(ctx)
+	if err != nil {
+		a.log.Error("read users", "error", err)
+		return ExitError
+	}
+	providers, err := a.db.ListProviders(ctx)
+	if err != nil {
+		a.log.Error("read providers", "error", err)
+		return ExitError
+	}
+	accounts, err := a.db.ListAllExternalAccounts(ctx)
+	if err != nil {
+		a.log.Error("read accounts", "error", err)
+		return ExitError
+	}
+
+	observed := make([]core.ObservedProvider, 0, len(providers))
+	for _, p := range providers {
+		observed = append(observed, core.ObservedProvider{
+			ID: p.ID, Type: p.Type, Name: p.Name,
+			HasObserved: p.LastObserveAt != nil, LastObserveOK: p.LastObserveOK,
+		})
+	}
+	active := make([]core.User, 0, len(users))
+	for _, u := range users {
+		if u.Status == core.UserActive {
+			active = append(active, u)
+		}
+	}
+
+	response := core.BuildUsage(core.UsageInput{
+		Now:             time.Now().UTC(),
+		RefreshInterval: a.cfg.RefreshInterval,
+		Users:           active,
+		Providers:       observed,
+		Accounts:        accounts,
+	})
+
+	if len(response.Users) == 0 {
+		fmt.Fprintln(stdout, "Nobody to report on. Add someone with `nuno users add <uid> [email]`, then run `nuno observe`.")
+		return ExitClean
+	}
+
+	table := tabwriter.NewWriter(stdout, 0, 8, 2, ' ', 0)
+	fmt.Fprintln(table, "PERSON\tSERVICE\tUSED\tCEILING\tSHARE\tSTATUS")
+	for _, user := range response.Users {
+		total := "unknown"
+		if user.UsedBytes != nil {
+			total = core.FormatIEC(*user.UsedBytes)
+		}
+		budget := "unlimited"
+		if user.BudgetBytes != nil {
+			budget = core.FormatIEC(*user.BudgetBytes)
+		}
+		complete := ""
+		if !user.Complete {
+			complete = "partial"
+		}
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			user.User, "(total)", total, budget, sharePercent(user.UsedPercent), complete)
+
+		for _, p := range user.Providers {
+			used := "-"
+			if p.UsedBytes != nil {
+				used = core.FormatIEC(*p.UsedBytes)
+			}
+			ceiling := "unlimited"
+			switch {
+			case p.Status == core.StatusUnknown || p.Status == core.StatusUnavailable:
+				ceiling = p.Status
+			case p.QuotaBytes != nil:
+				ceiling = core.FormatIEC(*p.QuotaBytes)
+			}
+			fmt.Fprintf(table, "\t%s\t%s\t%s\t%s\t%s\n",
+				p.Name, used, ceiling, sharePercent(p.UsedPercent), p.Status)
+		}
+	}
+	table.Flush()
+	return ExitClean
+}
+
+func sharePercent(percent *float64) string {
+	if percent == nil {
+		return "-"
+	}
+	return fmt.Sprintf("%.1f%%", *percent)
+}

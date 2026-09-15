@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -631,4 +632,201 @@ func TestSyncIdentityPropagatesAReadFailure(t *testing.T) {
 	if _, err := h.engine.SyncIdentity(context.Background(), broken); err == nil {
 		t.Fatal("a directory that cannot be read must not look like an empty one")
 	}
+}
+
+// The probe is the only write in M1, and it must never change a value or
+// touch an account nobody linked (ADR-0025, FR-7).
+func TestProbeWrite(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("no linked account means unproven, not no", func(t *testing.T) {
+		h := newHarness(t)
+		provider := &fake{typ: "nextcloud", accounts: []core.Account{account("nc-orphan", "nobody@example.org")}}
+		instances := []Instance{h.instance("cloud", "nextcloud", core.MatchEmail, provider)}
+		if _, err := h.engine.Observe(ctx, instances); err != nil {
+			t.Fatal(err)
+		}
+
+		result := h.engine.ProbeWrite(ctx, instances[0])
+		if result.Access != core.WriteUnproven {
+			t.Errorf("access = %v, want unproven", result.Access)
+		}
+		if len(provider.writes) != 0 {
+			t.Errorf("the probe wrote to %v, which nobody linked", provider.writes)
+		}
+		if !strings.Contains(result.Detail, "nuno link") {
+			t.Errorf("detail = %q, want the command that makes a probe possible", result.Detail)
+		}
+	})
+
+	t.Run("a linked account is probed with its own value", func(t *testing.T) {
+		h := newHarness(t)
+		h.identity(core.User{SourceUUID: "u-alice", UID: "alice", Email: "alice@example.org"})
+		provider := &fake{typ: "nextcloud", accounts: []core.Account{account("nc-alice", "alice@example.org")}}
+		instances := []Instance{h.instance("cloud", "nextcloud", core.MatchEmail, provider)}
+		if _, err := h.engine.Observe(ctx, instances); err != nil {
+			t.Fatal(err)
+		}
+
+		result := h.engine.ProbeWrite(ctx, instances[0])
+		if result.Access != core.WriteYes {
+			t.Fatalf("access = %v (%s, %v)", result.Access, result.Detail, result.Err)
+		}
+		if got, ok := provider.writes["nc-alice"]; !ok || !got.Equal(core.MustBytes(1073741824)) {
+			t.Errorf("the probe wrote %v, want the observed value unchanged", got)
+		}
+		// The outcome is persisted, because a health read can never answer it.
+		row, err := h.db.GetProviderByName(ctx, "cloud")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if row.WriteAccess != core.WriteYes || row.WriteProbedAt == nil {
+			t.Errorf("row = %+v", row)
+		}
+	})
+
+	t.Run("a credential that cannot write answers no", func(t *testing.T) {
+		h := newHarness(t)
+		h.identity(core.User{SourceUUID: "u-alice", UID: "alice", Email: "alice@example.org"})
+		provider := &refusingProvider{fake: fake{typ: "nextcloud", accounts: []core.Account{account("nc-alice", "alice@example.org")}}}
+		instances := []Instance{h.instance("cloud", "nextcloud", core.MatchEmail, provider)}
+		if _, err := h.engine.Observe(ctx, instances); err != nil {
+			t.Fatal(err)
+		}
+
+		result := h.engine.ProbeWrite(ctx, instances[0])
+		if result.Access != core.WriteNo {
+			t.Fatalf("access = %v, want no", result.Access)
+		}
+		if !strings.Contains(result.Detail, "Password confirmation") {
+			t.Errorf("detail = %q, want the provider's own reason", result.Detail)
+		}
+		row, _ := h.db.GetProviderByName(ctx, "cloud")
+		if row.WriteAccess != core.WriteNo {
+			t.Errorf("write access = %v", row.WriteAccess)
+		}
+	})
+
+	t.Run("an account the provider would rewrite is never the target", func(t *testing.T) {
+		h := newHarness(t)
+		h.identity(core.User{SourceUUID: "u-alice", UID: "alice", Email: "alice@example.org"})
+		// This provider rounds, and the stored value is not a fixed point.
+		provider := &roundingProvider{fake: fake{typ: "nextcloud", accounts: []core.Account{
+			func() core.Account {
+				a := account("nc-alice", "alice@example.org")
+				a.Quota = core.MustBytes(26844594176)
+				return a
+			}(),
+		}}}
+		instances := []Instance{h.instance("cloud", "nextcloud", core.MatchEmail, provider)}
+		if _, err := h.engine.Observe(ctx, instances); err != nil {
+			t.Fatal(err)
+		}
+
+		result := h.engine.ProbeWrite(ctx, instances[0])
+		if result.Access != core.WriteUnproven {
+			t.Errorf("access = %v, want unproven rather than a write that changes the value", result.Access)
+		}
+		if len(provider.writes) != 0 {
+			t.Errorf("the probe wrote %v, changing somebody's quota during a read", provider.writes)
+		}
+		if !strings.Contains(result.Detail, "would rewrite") {
+			t.Errorf("detail = %q", result.Detail)
+		}
+	})
+
+	t.Run("a provider that cannot set a quota is not probed", func(t *testing.T) {
+		h := newHarness(t)
+		caps := core.Capabilities{CanReadUsers: true, CanSetUserQuota: false}
+		instances := []Instance{h.instance("odd", "zfs", core.MatchEmail, &fake{typ: "zfs", caps: &caps})}
+		result := h.engine.ProbeWrite(ctx, instances[0])
+		if result.Access != core.WriteUnproven || result.Err != nil {
+			t.Errorf("result = %+v", result)
+		}
+	})
+}
+
+type refusingProvider struct{ fake }
+
+func (r *refusingProvider) SetQuota(context.Context, string, core.Quota) error {
+	return &core.AuthError{Provider: "nextcloud", Status: 403, Message: "Password confirmation is required"}
+}
+
+type roundingProvider struct{ fake }
+
+// Rounds down to whole GiB, the way Nextcloud's humanFileSize round trip
+// turns 26844594176 into 26843545600.
+func (r *roundingProvider) NormalizeQuota(q core.Quota) core.Quota {
+	if q.IsBytes() {
+		const giB = 1 << 30
+		return core.MustBytes(q.Bytes / giB * giB)
+	}
+	return q
+}
+
+// An adapter that can see a competing writer degrades the provider, and one
+// that cannot see a setting says so rather than reporting it absent (FR-75,
+// ADR-0027).
+func TestCompetingWriters(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.identity(core.User{SourceUUID: "u-alice", UID: "alice", Email: "alice@example.org"})
+	provider := &detectingProvider{
+		fake: fake{typ: "nextcloud", accounts: []core.Account{account("nc-alice", "alice@example.org")}},
+		found: []core.CompetingWriter{{
+			Setting: "s01ldapQuotaAttribute", Value: "nextcloudQuota",
+			Detail: "user_ldap rewrites the quota", Remedy: []string{"occ ldap:set-config s01 ldapQuotaAttribute ''"},
+		}},
+	}
+	instances := []Instance{h.instance("cloud", "nextcloud", core.MatchEmail, provider)}
+
+	found, undetectable, err := h.engine.CheckCompetingWriters(ctx, instances[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found) != 1 || len(undetectable) != 1 {
+		t.Fatalf("found = %+v, undetectable = %+v", found, undetectable)
+	}
+
+	row, err := h.db.GetProviderByName(ctx, "cloud")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !row.Degraded() || !strings.Contains(row.DegradedReason, "ldapQuotaAttribute") {
+		t.Errorf("degraded reason = %q, want the setting named", row.DegradedReason)
+	}
+
+	// Clearing it clears the reason, so a fixed instance stops being degraded.
+	provider.found = nil
+	instances[0].Row = row
+	if _, _, err := h.engine.CheckCompetingWriters(ctx, instances[0]); err != nil {
+		t.Fatal(err)
+	}
+	row, _ = h.db.GetProviderByName(ctx, "cloud")
+	if row.Degraded() {
+		t.Errorf("degraded reason = %q, want it cleared", row.DegradedReason)
+	}
+}
+
+func TestProviderWithoutDetectionIsNotAssumedClean(t *testing.T) {
+	h := newHarness(t)
+	instances := []Instance{h.instance("photos", "immich", core.MatchEmail, &fake{typ: "immich"})}
+	found, undetectable, err := h.engine.CheckCompetingWriters(context.Background(), instances[0])
+	if err != nil || len(found) != 0 || len(undetectable) != 0 {
+		t.Errorf("an adapter with no detection reports nothing either way: %v %v %v", found, undetectable, err)
+	}
+}
+
+type detectingProvider struct {
+	fake
+	found []core.CompetingWriter
+	err   error
+}
+
+func (d *detectingProvider) CompetingWriters(context.Context) ([]core.CompetingWriter, error) {
+	return d.found, d.err
+}
+
+func (d *detectingProvider) UndetectableWriters() []core.CompetingWriter {
+	return []core.CompetingWriter{{Setting: "oidc_login_default_quota", Remedy: []string{"occ config:system:get oidc_login_default_quota"}}}
 }

@@ -110,11 +110,14 @@ func (c *client) do(ctx context.Context, method, path string, form url.Values) (
 
 	var env envelope
 	if err := json.Unmarshal(raw, &env); err != nil {
+		// Often a proxy answering instead of Nextcloud. Saying what arrived,
+		// on one line, is the difference between a five-minute diagnosis and
+		// an hour.
 		return nil, &core.ProviderError{
 			Provider: providerType,
 			Op:       method + " " + path,
 			Status:   resp.StatusCode,
-			Message:  "response is not an OCS envelope",
+			Message:  "response is not an OCS envelope: " + summarize(raw),
 			Err:      err,
 		}
 	}
@@ -175,4 +178,18 @@ func retryAfter(resp *http.Response) time.Duration {
 		}
 	}
 	return 0
+}
+
+// summarize collapses a body into one short line, for an error message that
+// has to be readable in a log.
+func summarize(raw []byte) string {
+	const limit = 160
+	text := strings.Join(strings.Fields(string(raw)), " ")
+	if text == "" {
+		return "empty body"
+	}
+	if len(text) > limit {
+		return text[:limit] + "..."
+	}
+	return text
 }

@@ -115,13 +115,15 @@ func message(raw []byte) string {
 			return body.Error
 		}
 	}
-	const limit = 200
-	text := strings.TrimSpace(string(raw))
-	if len(text) > limit {
-		return text[:limit] + "..."
-	}
+	// A body that is not Immich's JSON is something else answering, often a
+	// proxy's HTML error page. Collapsing it keeps one log line one line.
+	const limit = 160
+	text := strings.Join(strings.Fields(string(raw)), " ")
 	if text == "" {
 		return "no message"
+	}
+	if len(text) > limit {
+		return text[:limit] + "..."
 	}
 	return text
 }

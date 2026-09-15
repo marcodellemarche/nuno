@@ -39,16 +39,17 @@ Starting M1 surfaced three things the design had not settled, so they were decid
 - [x] Core model with tagged quota values; provider interface and registry; `internal/core` import check in CI (FR-25, FR-28, FR-29, NFR-15)
 - [x] Nextcloud adapter: read-only health, list accounts, configured quota, usage with unknown detection, `NormalizeQuota` (FR-20, FR-22, FR-23)
 - [x] Immich adapter: same read path, usage cross-checked against `/api/server/statistics` (FR-21, FR-22, FR-23)
-- [ ] Identity sync from LLDAP: users and groups keyed on `entryuuid` (FR-1, FR-2, FR-9a)
-- [ ] Account linking: match keys including the OIDC subject, manual links, revalidation, unmanaged and orphan detection (FR-3, FR-6, FR-7, FR-8, FR-8a, FR-9, FR-9b)
-- [ ] Competing-writer detection, degrading the provider rather than blocking reads (FR-75)
-- [ ] The write probe, run after linking against a linked account, on both providers: the Immich write path is the one thing never exercised against the live stack (FR-76, ADR-0025)
-- [ ] `nuno doctor`: every precondition checked, every failure paired with the command that fixes it, and `--fix` emitting them as a script (FR-76, ADR-0027)
-- [ ] Version detection and out-of-range warning (NFR-12)
-- [ ] Scheduled read-only usage refresh (FR-48)
-- [ ] `GET /api/v1/usage` with an admin key from `NUNO_ADMIN_KEY`, and a plain aggregated HTML page (FR-40, FR-41, FR-42, FR-45, FR-46, FR-46a, FR-47, FR-50)
-- [ ] The page degrades instead of crashing when a provider or a credential is missing (FR-55)
-- [ ] CLI: `nuno usage`, `nuno accounts`, `nuno link`, `nuno unlink`, and the client mode that talks to a running server (FR-70a, FR-74). `nuno providers health` already works, offline only
+- [x] Identity sync from LLDAP: users and groups keyed on `entryuuid` (FR-1, FR-2, FR-9a)
+- [x] Account linking: match keys including the OIDC subject, manual links, revalidation, unmanaged and orphan detection (FR-3, FR-6, FR-7, FR-8, FR-8a, FR-9, FR-9b)
+- [x] Competing-writer detection, degrading the provider rather than blocking reads (FR-75), for the two settings OCS exposes
+- [x] The write probe, run after linking against a linked account, on both providers (FR-76, ADR-0025). Still never exercised against the live Immich, only against recorded and fake responses
+- [x] `nuno doctor`: every precondition checked, every failure paired with the command that fixes it, and `--fix` emitting them as a script (FR-76, ADR-0027)
+- [x] Version detection and out-of-range warning (NFR-12)
+- [x] Scheduled read-only usage refresh (FR-48)
+- [x] `GET /api/v1/usage` with an admin key from `NUNO_ADMIN_KEY`, and a plain aggregated HTML page (FR-40, FR-41, FR-42, FR-45, FR-46, FR-46a, FR-47, FR-50)
+- [x] The page degrades instead of crashing when a provider or a credential is missing (FR-55)
+- [x] CLI: `nuno providers health`, `nuno observe`, `nuno usage`, `nuno accounts`, `nuno users`, `nuno link`, `nuno unlink` (FR-70a), all offline, taking an exclusive lock
+- [ ] The client mode that lets a command run against a live server (FR-74). Until it lands, a command and a server cannot run at once: the second one refuses
 
 Precondition, not code: the target Nextcloud must move its default from `oidc_login_default_quota` to `files/default_quota` first, and it has not yet (`tests/fixtures/nextcloud-write-probe.json` records it set to `25 GB`). Nuno cannot do this itself (it is a system config, reachable only through `occ`, and reaching `occ` would mean root on the host: see [ADR-0023](docs/decisions.md#adr-0023-nuno-diagnoses-it-does-not-reconfigure-the-services-it-manages)), and it cannot even read it, so `nuno doctor --fix` emits a script that checks and moves it. FR-75's degradation gate covers the two `user_ldap` settings, which OCS does expose: see [ADR-0027](docs/decisions.md#adr-0027-a-competing-writer-nuno-cannot-see).
 
