@@ -357,12 +357,29 @@ func showUsage(ctx context.Context, a *app, stdout io.Writer) int {
 		}
 	}
 
+	policy, err := a.db.LoadPolicy(ctx)
+	if err != nil {
+		a.log.Error("read policy", "error", err)
+		return ExitError
+	}
+	userPolicies := make(map[int64]core.UserPolicy, len(active))
+	for _, u := range active {
+		up, _, err := a.db.UserPolicy(ctx, u.ID)
+		if err != nil {
+			a.log.Error("read user policy", "error", err, "user", u.UID)
+			return ExitError
+		}
+		userPolicies[u.ID] = up
+	}
+
 	response := core.BuildUsage(core.UsageInput{
 		Now:             time.Now().UTC(),
 		RefreshInterval: a.cfg.RefreshInterval,
 		Users:           active,
 		Providers:       observed,
 		Accounts:        accounts,
+		Policy:          policy,
+		UserPolicies:    userPolicies,
 	})
 
 	if len(response.Users) == 0 {

@@ -19,18 +19,19 @@ import (
 )
 
 type fakeStore struct {
-	users     []core.User
-	providers []store.ProviderRow
-	accounts  []core.ExternalAccount
-	issues    []core.LinkIssue
-	keys      map[string]bool
-	keyCount  int
-	policy    core.Policy
-	groups    map[string]string
-	runs      []store.RunSummary
-	changes   []store.AuditRow
-	adminKeys []store.AdminKeyRow
-	err       error
+	users        []core.User
+	providers    []store.ProviderRow
+	accounts     []core.ExternalAccount
+	issues       []core.LinkIssue
+	keys         map[string]bool
+	keyCount     int
+	policy       core.Policy
+	userPolicies map[int64]core.UserPolicy
+	groups       map[string]string
+	runs         []store.RunSummary
+	changes      []store.AuditRow
+	adminKeys    []store.AdminKeyRow
+	err          error
 }
 
 func (f *fakeStore) ListUsers(context.Context) ([]core.User, error) { return f.users, f.err }
@@ -47,6 +48,13 @@ func (f *fakeStore) CheckAdminKey(_ context.Context, presented core.Secret) (boo
 func (f *fakeStore) CountAdminKeys(context.Context) (int, error) { return f.keyCount, nil }
 
 func (f *fakeStore) LoadPolicy(context.Context) (core.Policy, error) { return f.policy, f.err }
+func (f *fakeStore) UserPolicy(_ context.Context, userID int64) (core.UserPolicy, map[int64]store.OverrideOrigin, error) {
+	up, ok := f.userPolicies[userID]
+	if !ok {
+		up = core.UserPolicy{ProviderOverrides: map[int64]core.Quota{}}
+	}
+	return up, nil, f.err
+}
 func (f *fakeStore) GroupsWithTiers(context.Context) (map[string]string, error) {
 	return f.groups, f.err
 }

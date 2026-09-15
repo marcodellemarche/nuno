@@ -88,6 +88,13 @@ type UsageInput struct {
 	Users           []User
 	Providers       []ObservedProvider
 	Accounts        []ExternalAccount
+
+	// Policy and UserPolicies are optional. When Policy has tiers, budget_bytes
+	// is the resolved effective budget and managed reflects the policy, which
+	// is what ADR-0022 promised for M2. When it has none, the budget falls back
+	// to the sum of observed ceilings, the documented pre-policy meaning.
+	Policy       Policy
+	UserPolicies map[int64]UserPolicy
 }
 
 // BuildUsage assembles the dashboard response.
@@ -111,6 +118,8 @@ func BuildUsage(in UsageInput) UsageResponse {
 		accountsByUser[*a.UserID] = append(accountsByUser[*a.UserID], a)
 	}
 
+	hasPolicy := len(in.Policy.Tiers) > 0
+
 	response := UsageResponse{Schema: UsageSchema, Users: make([]UsageUser, 0, len(in.Users))}
 	for _, user := range in.Users {
 		entry := UsageUser{
@@ -118,6 +127,21 @@ func BuildUsage(in UsageInput) UsageResponse {
 			UserUUID:  user.SourceUUID,
 			Complete:  true,
 			Providers: make([]UsageProvider, 0, len(accountsByUser[user.ID])),
+		}
+
+		// Resolve the policy for every configured provider, not only the ones
+		// this person has an account on: the effective budget is the sum of the
+		// resolved ceilings, and managed is a property of the policy, not of
+		// whether an account happens to exist (ADR-0020, FR-47).
+		resolutions := make(map[int64]Resolution, len(in.Providers))
+		ordered := make([]Resolution, 0, len(in.Providers))
+		if hasPolicy {
+			up := in.UserPolicies[user.ID]
+			for _, p := range in.Providers {
+				r := Resolve(user, p.ID, in.Policy, up)
+				resolutions[p.ID] = r
+				ordered = append(ordered, r)
+			}
 		}
 
 		var budget int64
@@ -129,7 +153,7 @@ func BuildUsage(in UsageInput) UsageResponse {
 			if !known {
 				continue
 			}
-			view := usageFor(in, provider, account)
+			view := usageFor(in, provider, account, resolutions[account.ProviderID].Present)
 			entry.Providers = append(entry.Providers, view)
 
 			switch {
@@ -138,15 +162,32 @@ func BuildUsage(in UsageInput) UsageResponse {
 			case view.QuotaBytes == nil && !account.Quota.IsUnlimited():
 				entry.Complete = false
 			}
-			if account.Quota.IsUnlimited() && (view.Status == StatusOK || view.Status == StatusStale) {
-				anyUnlimited = true
-			}
-			if view.QuotaBytes != nil {
-				budget += *view.QuotaBytes
+			// Without policy the budget is the sum of observed ceilings. With
+			// policy it is the resolved one, computed after the loop.
+			if !hasPolicy {
+				if account.Quota.IsUnlimited() && (view.Status == StatusOK || view.Status == StatusStale) {
+					anyUnlimited = true
+				}
+				if view.QuotaBytes != nil {
+					budget += *view.QuotaBytes
+				}
 			}
 			if view.UsedBytes != nil {
 				used += *view.UsedBytes
 			} else {
+				entry.Complete = false
+			}
+		}
+
+		if hasPolicy {
+			switch effective := EffectiveBudget(ordered); {
+			case effective.IsUnlimited():
+				anyUnlimited = true
+			case effective.IsBytes():
+				budget = effective.Bytes
+			default:
+				// The policy allocates nothing for this person, so there is no
+				// ceiling to report. complete says so.
 				entry.Complete = false
 			}
 		}
@@ -184,12 +225,14 @@ func BuildUsage(in UsageInput) UsageResponse {
 	return response
 }
 
-func usageFor(in UsageInput, provider ObservedProvider, account ExternalAccount) UsageProvider {
+func usageFor(in UsageInput, provider ObservedProvider, account ExternalAccount, managed bool) UsageProvider {
 	view := UsageProvider{
 		Type: provider.Type,
 		Name: provider.Name,
-		// Nothing manages anything until policy exists (ADR-0022).
-		Managed:    false,
+		// Managed is whether the policy still allocates this provider for this
+		// person, so a ceiling left over from a policy that no longer does is
+		// visible (FR-47). It is false when there is no policy at all.
+		Managed:    managed,
 		ObservedAt: account.ObservedAt.UTC(),
 		Status:     statusFor(in, provider, account),
 	}

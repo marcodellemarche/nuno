@@ -236,6 +236,55 @@ func TestOrderingIsStable(t *testing.T) {
 	}
 }
 
+// Once policy exists, budget_bytes is the resolved budget, which is the sum of
+// the ceilings resolved across providers, not the sum of the ceilings observed
+// on the accounts that happen to exist (ADR-0020, ADR-0022).
+func TestBudgetWithPolicyIsTheResolvedBudget(t *testing.T) {
+	tierID := int64(1)
+	in := input(owned(20, 1, MustBytes(161061273600), MustBytes(48318382080)))
+	in.Policy = Policy{
+		Tiers: map[int64]Tier{
+			tierID: {ID: tierID, Name: "admin", Budget: MustBytes(214748364800), Allocations: []Allocation{
+				{ProviderID: 10, Mode: ModeAbsolute, Value: 53687091200},
+				{ProviderID: 20, Mode: ModeAbsolute, Value: 161061273600},
+			}},
+		},
+		DefaultTierID: &tierID,
+	}
+
+	alice := BuildUsage(in).Users[0]
+	want := int64(53687091200 + 161061273600)
+	if alice.BudgetBytes == nil || *alice.BudgetBytes != want {
+		t.Errorf("budget = %v, want %d: the resolved budget counts the provider with no account", alice.BudgetBytes, want)
+	}
+	if len(alice.Providers) != 1 || !alice.Providers[0].Managed {
+		t.Errorf("providers = %+v, want the allocated one marked managed", alice.Providers)
+	}
+}
+
+// A ceiling left over from a policy that no longer allocates that provider is
+// exactly what managed exists to surface (FR-47).
+func TestManagedIsFalseForAProviderThePolicyDoesNotAllocate(t *testing.T) {
+	tierID := int64(1)
+	in := input(owned(10, 1, MustBytes(53687091200), MustBytes(1073741824)))
+	in.Policy = Policy{
+		Tiers: map[int64]Tier{
+			tierID: {ID: tierID, Name: "photos-only", Budget: MustBytes(161061273600), Allocations: []Allocation{
+				{ProviderID: 20, Mode: ModeAbsolute, Value: 161061273600},
+			}},
+		},
+		DefaultTierID: &tierID,
+	}
+
+	alice := BuildUsage(in).Users[0]
+	if alice.BudgetBytes == nil || *alice.BudgetBytes != 161061273600 {
+		t.Errorf("budget = %v, want only the allocated provider", alice.BudgetBytes)
+	}
+	if alice.Providers[0].Managed {
+		t.Error("cloud is not allocated by the policy, so its ceiling is not managed")
+	}
+}
+
 // The shape is a frozen contract, so the field names are asserted rather than
 // assumed.
 func TestTheSerializedShapeIsTheContract(t *testing.T) {

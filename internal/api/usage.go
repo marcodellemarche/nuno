@@ -23,6 +23,7 @@ type Store interface {
 	CountAdminKeys(ctx context.Context) (int, error)
 
 	LoadPolicy(ctx context.Context) (core.Policy, error)
+	UserPolicy(ctx context.Context, userID int64) (core.UserPolicy, map[int64]store.OverrideOrigin, error)
 	GroupsWithTiers(ctx context.Context) (map[string]string, error)
 	LastRuns(ctx context.Context, limit int) ([]store.RunSummary, error)
 	RecentChanges(ctx context.Context, limit int) ([]store.AuditRow, error)
@@ -119,6 +120,21 @@ func buildUsage(ctx context.Context, opts Options) (core.UsageResponse, error) {
 		}
 	}
 
+	// The policy makes budget_bytes the resolved budget and managed real, which
+	// is what the frozen contract promises from M2 (ADR-0022, FR-47).
+	policy, err := opts.Store.LoadPolicy(ctx)
+	if err != nil {
+		return core.UsageResponse{}, err
+	}
+	userPolicies := make(map[int64]core.UserPolicy, len(active))
+	for _, u := range active {
+		up, _, err := opts.Store.UserPolicy(ctx, u.ID)
+		if err != nil {
+			return core.UsageResponse{}, err
+		}
+		userPolicies[u.ID] = up
+	}
+
 	refresh := opts.RefreshInterval
 	if refresh <= 0 {
 		refresh = 15 * time.Minute
@@ -129,6 +145,8 @@ func buildUsage(ctx context.Context, opts Options) (core.UsageResponse, error) {
 		Users:           active,
 		Providers:       observed,
 		Accounts:        accounts,
+		Policy:          policy,
+		UserPolicies:    userPolicies,
 	}), nil
 }
 
