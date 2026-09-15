@@ -313,7 +313,7 @@ func BuildUsageDetail(response UsageResponse) UsageDetailResponse {
 		detail.Rows = append(detail.Rows, UsageRow{Name: user.User, Summary: user.Summary, Status: status})
 		for _, provider := range user.Providers {
 			detail.Rows = append(detail.Rows, UsageRow{
-				Name:    user.User + " \u00b7 " + titleCase(provider.Type),
+				Name:    user.User + " \u00b7 " + TitleCase(provider.Type),
 				Summary: provider.Summary,
 				Status:  provider.Status,
 			})
@@ -322,7 +322,9 @@ func BuildUsageDetail(response UsageResponse) UsageDetailResponse {
 	return detail
 }
 
-func titleCase(s string) string {
+// TitleCase capitalizes the first letter, for a service name in a widget:
+// "nextcloud" reads better as "Nextcloud" next to a person.
+func TitleCase(s string) string {
 	if s == "" {
 		return s
 	}
@@ -377,7 +379,7 @@ func BuildUsageByService(response UsageResponse) UsageDetailResponse {
 			status = "partial"
 		}
 		rows = append(rows, UsageRow{
-			Name:    titleCase(typ),
+			Name:    TitleCase(typ),
 			Summary: summarizeTotal(t.used, t.quota, t.unlimited, t.known),
 			Status:  status,
 		})

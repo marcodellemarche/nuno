@@ -36,6 +36,7 @@ func serve(ctx context.Context, a *app) int {
 			Log:             a.log,
 			AdminPassword:   a.cfg.AdminPassword,
 			RefreshInterval: a.cfg.RefreshInterval,
+			TrustedProxy:    a.cfg.TrustedProxy,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       60 * time.Second,

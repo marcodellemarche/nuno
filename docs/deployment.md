@@ -126,8 +126,32 @@ which answers "how much of what we allocated is used", not the disk capacity.
 Two other modes exist. `?detail=provider` is one row per person and provider,
 for a dashboard only admins see. The plain response without `detail` is the
 nested contract, with `with_accounts=1` to drop the service accounts in the
-directory. None of them shows only the caller, because a Homepage `customapi`
-widget has no idea who is looking at it.
+directory.
+
+## Showing each person their own quota
+
+None of the `customapi` modes can show only the caller, because that widget is
+fetched server-side with one key and has no idea who is looking. The `iframe`
+widget is different: the browser loads it, so it carries the session cookie,
+and the proxy's forward auth runs again on that request. That is what `GET /me`
+is for:
+
+```yaml
+- Storage:
+    - My quota:
+        icon: mdi-harddisk
+        widget:
+          type: iframe
+          name: quota
+          src: https://nuno.example.org/me
+```
+
+`/me` reads `Remote-User`, the header forward auth sets, and renders that
+person's own per-provider summary. It believes the header **only when the
+request arrives from `NUNO_TRUSTED_PROXY`**, the network the proxy runs on, and
+with nothing configured it believes nobody and answers 403. It is not behind
+the admin password, because the person reading it is not an admin; the proxy is
+what authenticates them.
 
 Read `status` before reading a number. A `quota_bytes` of `null` means unlimited under `ok` and `stale`, and means nothing at all under `unknown` or `unavailable`, where the read succeeded but the values did not. A user entry also carries `complete`, which is false when one of that person's services contributed nothing, so the totals are partial ([ADR-0026](decisions.md#adr-0026-the-usage-contract-needs-a-name-for-unknown)).
 

@@ -37,6 +37,12 @@ type Options struct {
 	// RefreshInterval decides when a reading becomes stale, at twice this
 	// value (ADR-0022).
 	RefreshInterval time.Duration
+
+	// TrustedProxy is the network the forward-auth headers may come from. A
+	// Remote-User header is believed only when the request arrives from it, so
+	// a container on the same network cannot claim to be somebody else. Empty
+	// means no header is trusted (NFR-14).
+	TrustedProxy string
 }
 
 // Routes builds the admin surface. It binds to localhost unless the
@@ -55,6 +61,11 @@ func Routes(opts Options) *http.ServeMux {
 	// Read-only, machine facing, and rate limited so a leaked key cannot be
 	// brute forced or used to hammer the providers' numbers.
 	mux.HandleFunc("GET /api/v1/usage", usageHandler(opts, newLimiter(60, 20)))
+
+	// The per-person page a proxy-authenticated member opens, so a shared
+	// dashboard can show each person their own quota without showing anyone
+	// else's. It trusts the forward-auth header, and only from the proxy.
+	mux.HandleFunc("GET /me", meHandler(opts))
 
 	page := basicAuth(opts.AdminPassword, pageHandler(opts))
 	mux.Handle("GET /{$}", page)

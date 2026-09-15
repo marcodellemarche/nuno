@@ -29,6 +29,8 @@ var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
 	"iec":      core.FormatIEC,
 	"quota":    quotaText,
 	"barWidth": barWidth,
+	// me.html is parsed by this glob too, so its helper must exist here.
+	"title": core.TitleCase,
 }).ParseFS(templateFS, "templates/*.html"))
 
 func staticHandler() http.Handler {

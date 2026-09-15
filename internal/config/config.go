@@ -38,6 +38,10 @@ type Config struct {
 	AdminKey      core.Secret // machine, read-only, for /api/v1/usage (FR-46a)
 	AdminPassword core.Secret // a human in the UI when no proxy provides auth
 
+	// TrustedProxy is the network the forward-auth headers may come from, for
+	// the per-person /me page. Empty means no header is trusted (NFR-14).
+	TrustedProxy string
+
 	LDAP      LDAP
 	Providers []Provider
 
@@ -124,6 +128,7 @@ func Load(env Env) (*Config, error) {
 		RefreshInterval: DefaultRefreshInterval,
 		AdminKey:        core.Secret(env.get("NUNO_ADMIN_KEY", "")),
 		AdminPassword:   core.Secret(env.get("NUNO_ADMIN_PASSWORD", "")),
+		TrustedProxy:    env.get("NUNO_TRUSTED_PROXY", ""),
 	}
 
 	var errs []error
