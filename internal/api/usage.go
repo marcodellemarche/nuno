@@ -72,7 +72,12 @@ func usageHandler(opts Options, limit *limiter) http.HandlerFunc {
 			return
 		}
 
-		response, err := buildUsage(r.Context(), opts)
+		// with_accounts=1 drops the people who have no account on any provider,
+		// which is what a shared dashboard wants: the service accounts in the
+		// directory are not people with a quota. The default stays every user
+		// (FR-45), so the admin view is unaffected.
+		withAccounts := r.URL.Query().Get("with_accounts") == "1"
+		response, err := buildUsage(r.Context(), opts, withAccounts)
 		if err != nil {
 			opts.Log.Error("usage: build response", "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "internal error")
@@ -87,7 +92,7 @@ func usageHandler(opts Options, limit *limiter) http.HandlerFunc {
 	}
 }
 
-func buildUsage(ctx context.Context, opts Options) (core.UsageResponse, error) {
+func buildUsage(ctx context.Context, opts Options, withAccounts bool) (core.UsageResponse, error) {
 	users, err := opts.Store.ListUsers(ctx)
 	if err != nil {
 		return core.UsageResponse{}, err
@@ -139,7 +144,7 @@ func buildUsage(ctx context.Context, opts Options) (core.UsageResponse, error) {
 	if refresh <= 0 {
 		refresh = 15 * time.Minute
 	}
-	return core.BuildUsage(core.UsageInput{
+	response := core.BuildUsage(core.UsageInput{
 		Now:             time.Now().UTC(),
 		RefreshInterval: refresh,
 		Users:           active,
@@ -147,7 +152,18 @@ func buildUsage(ctx context.Context, opts Options) (core.UsageResponse, error) {
 		Accounts:        accounts,
 		Policy:          policy,
 		UserPolicies:    userPolicies,
-	}), nil
+	})
+
+	if withAccounts {
+		kept := response.Users[:0]
+		for _, u := range response.Users {
+			if len(u.Providers) > 0 {
+				kept = append(kept, u)
+			}
+		}
+		response.Users = kept
+	}
+	return response, nil
 }
 
 func unauthorized(w http.ResponseWriter, detail string) {

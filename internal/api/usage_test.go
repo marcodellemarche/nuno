@@ -182,6 +182,41 @@ func TestUsageServesTheContract(t *testing.T) {
 	}
 }
 
+// A shared dashboard wants people, not the service accounts in the directory
+// that have no quota anywhere. The filter is opt-in, so the default response
+// stays every user (FR-45).
+func TestUsageWithAccountsDropsPeopleWhoHaveNone(t *testing.T) {
+	s := populated()
+	s.users = append(s.users, core.User{ID: 2, SourceUUID: "22222222", UID: "authelia", Status: core.UserActive})
+
+	all := usageUsers(t, s, "/api/v1/usage")
+	if len(all) != 2 {
+		t.Fatalf("default response has %d users, want every user", len(all))
+	}
+
+	people := usageUsers(t, s, "/api/v1/usage?with_accounts=1")
+	if len(people) != 1 || people[0].User != "alice" {
+		t.Fatalf("filtered response = %+v, want only alice", people)
+	}
+}
+
+func usageUsers(t *testing.T, s Store, path string) []core.UsageUser {
+	t.Helper()
+	mux := routes(t, s, "")
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.Header.Set("Authorization", "Bearer good-key")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%s: code = %d: %s", path, rec.Code, rec.Body.String())
+	}
+	var response core.UsageResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	return response.Users
+}
+
 func TestUsageIsRateLimited(t *testing.T) {
 	mux := routes(t, populated(), "")
 	limited := false

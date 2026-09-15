@@ -103,26 +103,22 @@ With forward auth in front, leave `NUNO_ADMIN_PASSWORD` unset. Without it, set o
         icon: mdi-harddisk
         widget:
           type: customapi
-          url: http://nuno:8080/api/v1/usage
+          # with_accounts=1 drops the service accounts in the directory, which
+          # have no quota anywhere. Without it the widget lists them too.
+          url: http://nuno:8080/api/v1/usage?with_accounts=1
           method: GET
           headers:
             Authorization: Bearer {{HOMEPAGE_VAR_NUNO_KEY}}
+          display: dynamic-list
           mappings:
-            - field:
-                users:
-                  0: user
-              label: person
-            - field:
-                users:
-                  0: used_percent
-              label: used
-              format: percent
-            - field:
-                users:
-                  0: providers:
-                    0: status
-              label: status
+            items: users
+            name: user
+            label: used_percent
+            format: percent
 ```
+
+The list is sorted by `user_uuid`, which is stable, so a person keeps their
+row. `used_percent` is empty for an unlimited ceiling.
 
 Read `status` before reading a number. A `quota_bytes` of `null` means unlimited under `ok` and `stale`, and means nothing at all under `unknown` or `unavailable`, where the read succeeded but the values did not. A user entry also carries `complete`, which is false when one of that person's services contributed nothing, so the totals are partial ([ADR-0026](decisions.md#adr-0026-the-usage-contract-needs-a-name-for-unknown)).
 

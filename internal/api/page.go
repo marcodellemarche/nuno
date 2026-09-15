@@ -111,7 +111,9 @@ func pageHandler(opts Options) http.HandlerFunc {
 			Error:    r.URL.Query().Get("err"),
 		}
 
-		usage, err := buildUsage(r.Context(), opts)
+		// The admin page shows everyone, including the service accounts in the
+		// directory: an admin needs to see them to know they are not managed.
+		usage, err := buildUsage(r.Context(), opts, false)
 		if err != nil {
 			opts.Log.Error("page: build usage", "error", err)
 			data.Warnings = append(data.Warnings, "Usage could not be read from the database: "+err.Error())
