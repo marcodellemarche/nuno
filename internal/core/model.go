@@ -3,6 +3,7 @@
 package core
 
 import (
+	"context"
 	"strings"
 	"time"
 )
@@ -127,4 +128,34 @@ func NormalizeEmail(email string) string {
 // case-insensitively (ADR-0013).
 func NormalizeUsername(name string) string {
 	return strings.ToLower(strings.TrimSpace(name))
+}
+
+// IdentitySnapshot is one directory read, whole. It is applied atomically, so
+// a sync that fails halfway cannot orphan people who exist.
+type IdentitySnapshot struct {
+	Source IdentitySource
+	Users  []User
+	Groups []Group
+}
+
+// IdentityRead is one directory read plus what it had to leave out, so the
+// gaps are visible rather than silent.
+type IdentityRead struct {
+	Snapshot IdentitySnapshot
+
+	// SkippedEntries are entries with no stable uuid. They cannot be keyed on
+	// anything that survives a rename, and keying on a mutable attribute is
+	// what loses links and overrides (FR-9a).
+	SkippedEntries []string
+
+	// UnresolvedMemberships are memberOf values naming a group the same read
+	// did not return.
+	UnresolvedMemberships []string
+}
+
+// Directory is a source Nuno reads people and groups from. Manual users exist
+// with no directory at all (FR-2).
+type Directory interface {
+	Sync(ctx context.Context) (IdentityRead, error)
+	Version(ctx context.Context) (string, error)
 }

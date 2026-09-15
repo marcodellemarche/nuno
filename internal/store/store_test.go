@@ -239,3 +239,27 @@ func mustExec(t *testing.T, db *DB, query string, args ...any) {
 		t.Fatalf("%s: %v", query, err)
 	}
 }
+
+func TestLockIsExclusive(t *testing.T) {
+	dir := t.TempDir()
+	release, err := Lock(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A second lock from the same process still has to fail, or two commands
+	// in one shell would both proceed.
+	if _, err := Lock(dir); err == nil {
+		t.Error("a second lock must fail while the first is held")
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	again, err := Lock(dir)
+	if err != nil {
+		t.Fatalf("releasing must make the lock available again: %v", err)
+	}
+	if err := again(); err != nil {
+		t.Fatal(err)
+	}
+}

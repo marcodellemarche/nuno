@@ -38,8 +38,24 @@ type Config struct {
 	AdminKey      core.Secret // machine, read-only, for /api/v1/usage (FR-46a)
 	AdminPassword core.Secret // a human in the UI when no proxy provides auth
 
+	LDAP      LDAP
 	Providers []Provider
 }
+
+// LDAP is the identity source. It is optional: manual users exist with no
+// directory at all (FR-2), and Nuno reports rather than refusing to start.
+type LDAP struct {
+	URL          string
+	BaseDN       string
+	BindDN       string
+	BindPassword core.Secret
+	UserFilter   string
+	GroupFilter  string
+	Timeout      time.Duration
+}
+
+// Configured reports whether a directory was configured at all.
+func (l LDAP) Configured() bool { return l.URL != "" }
 
 // Provider is one configured provider instance. Its name comes from the env
 // prefix it was read from, which is the ConfigRef in the model.
@@ -97,6 +113,7 @@ func Load(env Env) (*Config, error) {
 	}
 
 	var errs []error
+	var err error
 	fail := func(format string, a ...any) { errs = append(errs, fmt.Errorf(format, a...)) }
 
 	if v := env.get("NUNO_ALLOW_PUBLIC_BIND", ""); v != "" {
@@ -121,6 +138,11 @@ func Load(env Env) (*Config, error) {
 		default:
 			cfg.RefreshInterval = d
 		}
+	}
+
+	cfg.LDAP, err = loadLDAP(env)
+	if err != nil {
+		errs = append(errs, err)
 	}
 
 	providers, perrs := loadProviders(env)
@@ -259,4 +281,36 @@ func parseBool(v string) (bool, error) {
 		return false, nil
 	}
 	return false, fmt.Errorf("%q is not a boolean", v)
+}
+
+// loadLDAP reads the identity source. A URL with no base DN is a
+// misconfiguration worth refusing: searching from an empty base would either
+// fail or return the whole tree.
+func loadLDAP(env Env) (LDAP, error) {
+	ldap := LDAP{
+		URL:          env.get("NUNO_LDAP_URL", ""),
+		BaseDN:       env.get("NUNO_LDAP_BASE_DN", ""),
+		BindDN:       env.get("NUNO_LDAP_BIND_DN", ""),
+		BindPassword: core.Secret(env.get("NUNO_LDAP_BIND_PASSWORD", "")),
+		UserFilter:   env.get("NUNO_LDAP_USER_FILTER", ""),
+		GroupFilter:  env.get("NUNO_LDAP_GROUP_FILTER", ""),
+	}
+	if !ldap.Configured() {
+		return ldap, nil
+	}
+	if ldap.BaseDN == "" {
+		return ldap, errors.New("NUNO_LDAP_BASE_DN is required when NUNO_LDAP_URL is set")
+	}
+	if v := env.get("NUNO_LDAP_TIMEOUT", ""); v != "" {
+		d, err := time.ParseDuration(v)
+		switch {
+		case err != nil:
+			return ldap, fmt.Errorf("NUNO_LDAP_TIMEOUT %q: %w", v, err)
+		case d <= 0:
+			return ldap, fmt.Errorf("NUNO_LDAP_TIMEOUT must be positive, got %s", d)
+		default:
+			ldap.Timeout = d
+		}
+	}
+	return ldap, nil
 }

@@ -15,6 +15,8 @@ import (
 
 	"github.com/marcodellemarche/nuno/internal/config"
 	"github.com/marcodellemarche/nuno/internal/core"
+	"github.com/marcodellemarche/nuno/internal/identity/ldap"
+	"github.com/marcodellemarche/nuno/internal/reconcile"
 	"github.com/marcodellemarche/nuno/internal/store"
 )
 
@@ -30,6 +32,11 @@ Commands:
   serve               run the server: migrate, then listen
   migrate             apply pending database migrations and exit
   providers health    read each provider: reachable, version, credential
+  observe             sync the directory and read every provider, writing nothing
+  accounts            list observed accounts, who owns them, and what needs a decision
+  users               list, add or remove people who exist in no directory
+  link                link a person to an account explicitly
+  unlink              remove a link
   version             print the version
 
 Configuration is read from the environment, and from the env-style file named
@@ -54,15 +61,25 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprint(stdout, usage)
 		return ExitClean
 	case "serve":
-		return withApp(stderr, serve)
+		return withAppMigrating(stderr, serve)
 	case "migrate":
-		return withApp(stderr, migrateOnly)
+		return withAppMigrating(stderr, migrateOnly)
+	case "observe":
+		return withApp(stderr, func(ctx context.Context, a *app) int { return observeOnce(ctx, a, stdout) })
+	case "accounts":
+		return withApp(stderr, func(ctx context.Context, a *app) int { return listAccounts(ctx, a, stdout) })
+	case "users":
+		return withApp(stderr, func(ctx context.Context, a *app) int { return manageUsers(ctx, a, args[1:], stdout) })
+	case "link":
+		return withApp(stderr, func(ctx context.Context, a *app) int { return linkAccount(ctx, a, args[1:], stdout) })
+	case "unlink":
+		return withApp(stderr, func(ctx context.Context, a *app) int { return unlinkAccount(ctx, a, args[1:], stdout) })
 	case "providers":
 		if len(args) < 2 || args[1] != "health" {
 			fmt.Fprintf(stderr, "nuno: usage: nuno providers health\n")
 			return ExitConfig
 		}
-		return withConfig(stderr, func(ctx context.Context, cfg *config.Config, log *slog.Logger, instances []providerInstance) int {
+		return withConfig(stderr, func(ctx context.Context, cfg *config.Config, log *slog.Logger, instances []reconcile.Instance) int {
 			return providersHealth(ctx, stdout, instances)
 		})
 	default:
@@ -74,7 +91,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 // withConfig loads configuration and builds the providers, without opening
 // the database. A command that only reads providers needs no schema and no
 // run lock.
-func withConfig(stderr io.Writer, fn func(context.Context, *config.Config, *slog.Logger, []providerInstance) int) int {
+func withConfig(stderr io.Writer, fn func(context.Context, *config.Config, *slog.Logger, []reconcile.Instance) int) int {
 	cfg, log, code := loadConfig(stderr)
 	if cfg == nil {
 		return code
@@ -84,7 +101,7 @@ func withConfig(stderr io.Writer, fn func(context.Context, *config.Config, *slog
 		log.Error("build the provider registry", "error", err)
 		return ExitConfig
 	}
-	instances := buildProviders(cfg, registry, log)
+	instances := buildProviders(context.Background(), cfg, registry, nil, log)
 
 	ctx, stop := signalContext()
 	defer stop()
@@ -93,19 +110,41 @@ func withConfig(stderr io.Writer, fn func(context.Context, *config.Config, *slog
 
 // app is what every command that touches state needs.
 type app struct {
-	cfg *config.Config
-	log *slog.Logger
-	db  *store.DB
+	cfg       *config.Config
+	log       *slog.Logger
+	db        *store.DB
+	directory core.Directory
+	instances []reconcile.Instance
+	stderr    io.Writer
 }
 
 // withApp loads configuration and opens the database. Only serve and migrate
 // reach the migration path, so every other command will call CheckSchema
 // instead (FR-73, ADR-0018).
 func withApp(stderr io.Writer, fn func(context.Context, *app) int) int {
+	return withAppSchema(stderr, false, fn)
+}
+
+// withAppMigrating is for the two commands allowed to migrate (FR-73).
+func withAppMigrating(stderr io.Writer, fn func(context.Context, *app) int) int {
+	return withAppSchema(stderr, true, fn)
+}
+
+func withAppSchema(stderr io.Writer, migrates bool, fn func(context.Context, *app) int) int {
 	cfg, log, code := loadConfig(stderr)
 	if cfg == nil {
 		return code
 	}
+
+	// One process writes at a time, by construction (ADR-0018). The HTTP
+	// client mode that would let a command run against a live server is not
+	// written yet, so an offline command refuses rather than corrupting.
+	release, err := store.Lock(cfg.DataDir)
+	if err != nil {
+		log.Error("another process is using this data directory", "error", err)
+		return ExitConfig
+	}
+	defer release()
 
 	db, err := store.Open(filepath.Join(cfg.DataDir, "nuno.db"))
 	if err != nil {
@@ -117,7 +156,35 @@ func withApp(stderr io.Writer, fn func(context.Context, *app) int) int {
 	ctx, stop := signalContext()
 	defer stop()
 
-	return fn(ctx, &app{cfg: cfg, log: log, db: db})
+	// Only serve and migrate apply migrations. Every other command refuses on
+	// a mismatch rather than half-working against a schema it does not know
+	// (FR-73, ADR-0018).
+	if !migrates {
+		if err := store.CheckSchema(ctx, db); err != nil {
+			log.Error("database schema mismatch", "error", err)
+			return ExitConfig
+		}
+	}
+
+	registry, err := buildRegistry()
+	if err != nil {
+		log.Error("build the provider registry", "error", err)
+		return ExitConfig
+	}
+	directory, err := buildDirectory(cfg)
+	if err != nil {
+		log.Error("identity source is unavailable", "error", err)
+		return ExitConfig
+	}
+
+	return fn(ctx, &app{
+		cfg:       cfg,
+		log:       log,
+		db:        db,
+		directory: directory,
+		instances: buildProviders(ctx, cfg, registry, db, log),
+		stderr:    stderr,
+	})
 }
 
 // loadConfig resolves the environment and reports every problem at once, so
@@ -199,4 +266,21 @@ func warnOnMissingCredentials(cfg *config.Config, log *slog.Logger) {
 		log.Debug("provider configured",
 			"provider", p.Name, "type", p.Type, "url", core.RedactURL(p.BaseURL), "match_key", p.MatchKey)
 	}
+}
+
+// buildDirectory wires the identity source. It is optional: with none
+// configured only manual users exist (FR-2).
+func buildDirectory(cfg *config.Config) (core.Directory, error) {
+	if !cfg.LDAP.Configured() {
+		return nil, nil
+	}
+	return ldap.New(ldap.Config{
+		URL:          cfg.LDAP.URL,
+		BaseDN:       cfg.LDAP.BaseDN,
+		BindDN:       cfg.LDAP.BindDN,
+		BindPassword: cfg.LDAP.BindPassword,
+		UserFilter:   cfg.LDAP.UserFilter,
+		GroupFilter:  cfg.LDAP.GroupFilter,
+		Timeout:      cfg.LDAP.Timeout,
+	})
 }

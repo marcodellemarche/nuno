@@ -101,7 +101,7 @@ func TestReplaceIdentity(t *testing.T) {
 	ctx := context.Background()
 	db := migrated(t)
 
-	snap := IdentitySnapshot{
+	snap := core.IdentitySnapshot{
 		Source: core.SourceLDAP,
 		Groups: []core.Group{{SourceUUID: "g-photographers", Name: "photographers"}},
 		Users: []core.User{
@@ -187,7 +187,7 @@ func TestReplaceIdentity(t *testing.T) {
 // to the default tier in M2.
 func TestReplaceIdentityRefusesAMembershipWithNoGroup(t *testing.T) {
 	db := migrated(t)
-	_, err := db.ReplaceIdentity(context.Background(), IdentitySnapshot{
+	_, err := db.ReplaceIdentity(context.Background(), core.IdentitySnapshot{
 		Source: core.SourceLDAP,
 		Users:  []core.User{{SourceUUID: "u-alice", UID: "alice", GroupUUIDs: []string{"g-missing"}}},
 	})
@@ -276,7 +276,7 @@ func TestLinksAndIssues(t *testing.T) {
 	ctx := context.Background()
 	db := migrated(t)
 	cloud := provider(t, db, "cloud", "nextcloud")
-	if _, err := db.ReplaceIdentity(ctx, IdentitySnapshot{
+	if _, err := db.ReplaceIdentity(ctx, core.IdentitySnapshot{
 		Source: core.SourceLDAP,
 		Users: []core.User{
 			{SourceUUID: "u-alice", UID: "alice", Email: "alice@example.org"},
@@ -443,5 +443,54 @@ func TestTheSecondMigrationIsApplied(t *testing.T) {
 	}
 	if version != target {
 		t.Errorf("database is at %d, want %d", version, target)
+	}
+}
+
+func TestManualUsers(t *testing.T) {
+	ctx := context.Background()
+	db := migrated(t)
+
+	alice, err := db.AddManualUser(ctx, core.User{UID: "alice", Email: "alice@example.org"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alice.Source != core.SourceManual || alice.SourceUUID == "" || alice.ID == 0 {
+		t.Fatalf("user = %+v, want a manual user with a generated uuid", alice)
+	}
+	if alice.DisplayName != "alice" {
+		t.Errorf("display name = %q, want the uid as a fallback", alice.DisplayName)
+	}
+
+	// Two people with one uid would be ambiguous everywhere downstream.
+	if _, err := db.AddManualUser(ctx, core.User{UID: "Alice"}); err == nil {
+		t.Error("a duplicate uid must be refused, case-insensitively")
+	}
+	if _, err := db.AddManualUser(ctx, core.User{UID: "  "}); err == nil {
+		t.Error("a blank uid must be refused")
+	}
+
+	// A directory sync must not orphan someone who exists in no directory.
+	if _, err := db.ReplaceIdentity(ctx, core.IdentitySnapshot{
+		Source: core.SourceLDAP,
+		Users:  []core.User{{SourceUUID: "u-bob", UID: "bob"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	users, err := db.ListUsers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range users {
+		if u.Source == core.SourceManual && u.Status != core.UserActive {
+			t.Errorf("the manual user was orphaned by an unrelated sync: %+v", u)
+		}
+	}
+
+	deleted, err := db.DeleteUser(ctx, alice.ID)
+	if err != nil || !deleted {
+		t.Fatalf("delete = %v, %v", deleted, err)
+	}
+	if again, _ := db.DeleteUser(ctx, alice.ID); again {
+		t.Error("deleting someone already gone must report nothing removed")
 	}
 }

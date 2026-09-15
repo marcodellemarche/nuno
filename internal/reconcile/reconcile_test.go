@@ -94,7 +94,7 @@ func (h *harness) instance(name, typ string, key core.MatchKey, provider core.Pr
 
 func (h *harness) identity(users ...core.User) {
 	h.t.Helper()
-	if _, err := h.db.ReplaceIdentity(context.Background(), store.IdentitySnapshot{
+	if _, err := h.db.ReplaceIdentity(context.Background(), core.IdentitySnapshot{
 		Source: core.SourceLDAP, Users: users,
 	}); err != nil {
 		h.t.Fatal(err)
@@ -542,5 +542,93 @@ func TestObserveRecordsHealthWithoutTouchingWriteAccess(t *testing.T) {
 	}
 	if row.LastObserveAt == nil || time.Since(*row.LastObserveAt) > time.Minute {
 		t.Errorf("last observe at = %v", row.LastObserveAt)
+	}
+}
+
+// fakeDirectory answers a sync from a script.
+type fakeDirectory struct {
+	read core.IdentityRead
+	err  error
+}
+
+func (f fakeDirectory) Sync(context.Context) (core.IdentityRead, error) {
+	return f.read, f.err
+}
+func (f fakeDirectory) Version(context.Context) (string, error) { return "LLDAP test", nil }
+
+func TestSyncIdentityApplies(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+
+	directory := fakeDirectory{read: core.IdentityRead{
+		Snapshot: core.IdentitySnapshot{
+			Source: core.SourceLDAP,
+			Groups: []core.Group{{SourceUUID: "g-staff", Name: "staff"}},
+			Users: []core.User{
+				{SourceUUID: "u-alice", UID: "alice", Email: "alice@example.org", GroupUUIDs: []string{"g-staff"}},
+			},
+		},
+		SkippedEntries:        []string{"uid=ghost,ou=people,dc=example,dc=org"},
+		UnresolvedMemberships: []string{"cn=lldap_admin,ou=groups,dc=example,dc=org"},
+	}}
+
+	result, err := h.engine.SyncIdentity(ctx, directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Users != 1 || result.Groups != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+	users, _ := h.db.ListUsers(ctx)
+	if len(users) != 1 || len(users[0].GroupUUIDs) != 1 {
+		t.Errorf("users = %+v", users)
+	}
+}
+
+// A wrong filter or a base DN typo would otherwise orphan everyone at once.
+func TestSyncIdentityRefusesToOrphanEveryone(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.identity(
+		core.User{SourceUUID: "u-alice", UID: "alice", Email: "alice@example.org"},
+		core.User{SourceUUID: "u-bob", UID: "bob", Email: "bob@example.org"},
+	)
+
+	empty := fakeDirectory{read: core.IdentityRead{
+		Snapshot: core.IdentitySnapshot{Source: core.SourceLDAP},
+	}}
+	if _, err := h.engine.SyncIdentity(ctx, empty); err == nil {
+		t.Fatal("an empty directory answer must be refused while people are known")
+	}
+
+	users, _ := h.db.ListUsers(ctx)
+	for _, u := range users {
+		if u.Status != core.UserActive {
+			t.Errorf("%s was orphaned anyway: %q", u.UID, u.Status)
+		}
+	}
+}
+
+// On a fresh install an empty directory is legitimate, not a failure.
+func TestSyncIdentityAcceptsAnEmptyDirectoryOnAFreshInstall(t *testing.T) {
+	h := newHarness(t)
+	empty := fakeDirectory{read: core.IdentityRead{Snapshot: core.IdentitySnapshot{Source: core.SourceLDAP}}}
+	if _, err := h.engine.SyncIdentity(context.Background(), empty); err != nil {
+		t.Fatalf("no users and nobody known is not a problem: %v", err)
+	}
+}
+
+func TestSyncIdentityWithNoDirectoryIsANoOp(t *testing.T) {
+	h := newHarness(t)
+	if _, err := h.engine.SyncIdentity(context.Background(), nil); err != nil {
+		t.Fatalf("manual users exist with no directory at all (FR-2): %v", err)
+	}
+}
+
+func TestSyncIdentityPropagatesAReadFailure(t *testing.T) {
+	h := newHarness(t)
+	broken := fakeDirectory{err: &core.UnreachableError{Provider: "ldap", Err: errors.New("no route to host")}}
+	if _, err := h.engine.SyncIdentity(context.Background(), broken); err == nil {
+		t.Fatal("a directory that cannot be read must not look like an empty one")
 	}
 }

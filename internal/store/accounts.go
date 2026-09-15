@@ -49,7 +49,7 @@ func (db *DB) ReplaceExternalAccounts(ctx context.Context, providerID int64, acc
 				   quota = excluded.quota, used = excluded.used,
 				   never_used = excluded.never_used,
 				   observed_at = excluded.observed_at, observe_ok = 1`,
-				providerID, a.ExternalID, a.Subject, a.Username, a.Email, NormalizeEmail(a.Email),
+				providerID, a.ExternalID, a.Subject, a.Username, a.Email, core.NormalizeEmail(a.Email),
 				boolToInt(a.Enabled), boolToInt(a.Deleted),
 				a.Quota.Encode(), a.Used.Encode(), boolToInt(a.NeverUsed), formatTime(at),
 			); err != nil {

@@ -13,6 +13,8 @@ import (
 
 	"github.com/marcodellemarche/nuno/internal/config"
 	"github.com/marcodellemarche/nuno/internal/core"
+	"github.com/marcodellemarche/nuno/internal/reconcile"
+	"github.com/marcodellemarche/nuno/internal/store"
 )
 
 type fakeProvider struct {
@@ -70,9 +72,9 @@ func TestBuildProvidersSkipsWhatItCannotBuild(t *testing.T) {
 
 	var logged bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&logged, nil))
-	instances := buildProviders(cfg, registry, log)
+	instances := buildProviders(context.Background(), cfg, registry, nil, log)
 
-	if len(instances) != 1 || instances[0].config.Name != "cloud" {
+	if len(instances) != 1 || instances[0].Row.Name != "cloud" {
 		t.Fatalf("built %d providers, want only cloud: %+v", len(instances), instances)
 	}
 	for _, want := range []string{"photos", "files", "NUNO_PROVIDER_PHOTOS", "NUNO_PROVIDER_FILES"} {
@@ -88,7 +90,7 @@ func TestBuildProvidersSkipsWhatItCannotBuild(t *testing.T) {
 func TestProvidersHealthExitCodes(t *testing.T) {
 	cases := []struct {
 		name      string
-		instances []providerInstance
+		instances []reconcile.Instance
 		wantCode  int
 		wantOut   []string
 	}{
@@ -99,9 +101,9 @@ func TestProvidersHealthExitCodes(t *testing.T) {
 		},
 		{
 			name: "healthy",
-			instances: []providerInstance{{
-				config:   config.Provider{Name: "cloud", Type: "nextcloud"},
-				provider: fakeProvider{health: core.HealthResult{Reachable: true, Version: "34.0.4", InSupported: true}},
+			instances: []reconcile.Instance{{
+				Row:      store.ProviderRow{ProviderInstance: core.ProviderInstance{Name: "cloud", Type: "nextcloud"}},
+				Provider: fakeProvider{health: core.HealthResult{Reachable: true, Version: "34.0.4", InSupported: true}},
 			}},
 			wantCode: ExitClean,
 			// Write access is never proven by a read.
@@ -109,18 +111,18 @@ func TestProvidersHealthExitCodes(t *testing.T) {
 		},
 		{
 			name: "outside the supported major is a warning, not a failure",
-			instances: []providerInstance{{
-				config:   config.Provider{Name: "photos", Type: "immich"},
-				provider: fakeProvider{health: core.HealthResult{Reachable: true, Version: "v4.0.0"}},
+			instances: []reconcile.Instance{{
+				Row:      store.ProviderRow{ProviderInstance: core.ProviderInstance{Name: "photos", Type: "immich"}},
+				Provider: fakeProvider{health: core.HealthResult{Reachable: true, Version: "v4.0.0"}},
 			}},
 			wantCode: ExitClean,
 			wantOut:  []string{"outside the supported major"},
 		},
 		{
 			name: "unreachable is an error",
-			instances: []providerInstance{{
-				config: config.Provider{Name: "cloud", Type: "nextcloud"},
-				provider: fakeProvider{health: core.HealthResult{
+			instances: []reconcile.Instance{{
+				Row: store.ProviderRow{ProviderInstance: core.ProviderInstance{Name: "cloud", Type: "nextcloud"}},
+				Provider: fakeProvider{health: core.HealthResult{
 					Err: &core.UnreachableError{Provider: "nextcloud", Err: errors.New("connection refused")},
 				}},
 			}},
@@ -129,9 +131,9 @@ func TestProvidersHealthExitCodes(t *testing.T) {
 		},
 		{
 			name: "reachable but rejected is an error that says so",
-			instances: []providerInstance{{
-				config: config.Provider{Name: "cloud", Type: "nextcloud"},
-				provider: fakeProvider{health: core.HealthResult{
+			instances: []reconcile.Instance{{
+				Row: store.ProviderRow{ProviderInstance: core.ProviderInstance{Name: "cloud", Type: "nextcloud"}},
+				Provider: fakeProvider{health: core.HealthResult{
 					Reachable: true, Version: "34.0.4", InSupported: true,
 					Err: &core.AuthError{Provider: "nextcloud", Status: 403, Message: "Password confirmation is required"},
 				}},

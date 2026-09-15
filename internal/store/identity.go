@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -12,14 +13,6 @@ import (
 
 	"github.com/marcodellemarche/nuno/internal/core"
 )
-
-// IdentitySnapshot is one directory read, whole. Applying it atomically is
-// what keeps a half-finished sync from orphaning people who exist.
-type IdentitySnapshot struct {
-	Source core.IdentitySource
-	Users  []core.User
-	Groups []core.Group
-}
 
 type IdentityResult struct {
 	Users    int
@@ -36,7 +29,7 @@ type IdentityResult struct {
 // audit history stays and reconcile skips them (FR-9). A group missing from
 // the snapshot keeps its row, because a group-to-tier mapping must survive a
 // directory hiccup; only the membership is recomputed.
-func (db *DB) ReplaceIdentity(ctx context.Context, snap IdentitySnapshot) (IdentityResult, error) {
+func (db *DB) ReplaceIdentity(ctx context.Context, snap core.IdentitySnapshot) (IdentityResult, error) {
 	if snap.Source == "" {
 		return IdentityResult{}, fmt.Errorf("a snapshot needs a source")
 	}
@@ -112,7 +105,7 @@ func upsertUser(ctx context.Context, tx *sql.Tx, source core.IdentitySource, u c
 		_, err = tx.ExecContext(ctx,
 			`UPDATE users SET uid = ?, email = ?, email_normalized = ?, display_name = ?, status = ?, updated_at = ?
 			 WHERE id = ?`,
-			u.UID, u.Email, NormalizeEmail(u.Email), u.DisplayName, string(core.UserActive), now, id)
+			u.UID, u.Email, core.NormalizeEmail(u.Email), u.DisplayName, string(core.UserActive), now, id)
 		return id, restored, err
 	case !isNoRows(err):
 		return 0, false, err
@@ -121,7 +114,7 @@ func upsertUser(ctx context.Context, tx *sql.Tx, source core.IdentitySource, u c
 	res, err := tx.ExecContext(ctx,
 		`INSERT INTO users (source, source_uuid, uid, email, email_normalized, display_name, status, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		string(source), u.SourceUUID, u.UID, u.Email, NormalizeEmail(u.Email), u.DisplayName,
+		string(source), u.SourceUUID, u.UID, u.Email, core.NormalizeEmail(u.Email), u.DisplayName,
 		string(core.UserActive), now, now)
 	if err != nil {
 		return 0, false, fmt.Errorf("insert user %q: %w", u.UID, err)
@@ -215,12 +208,73 @@ func (db *DB) ListUsers(ctx context.Context) ([]core.User, error) {
 	return users, memberships.Err()
 }
 
-// NormalizeEmail is the form stored in the indexed column and the form
-// matching compares. Case folding and trimming only: an address is not
-// rewritten beyond what makes two spellings of the same mailbox equal
-// (ADR-0013).
-func NormalizeEmail(email string) string {
-	return strings.ToLower(strings.TrimSpace(email))
+func isNoRows(err error) bool { return errors.Is(err, sql.ErrNoRows) }
+
+// AddManualUser inserts a person who exists in no directory, for services not
+// behind SSO (FR-2). A manual user is never orphaned by a directory sync,
+// because orphaning is scoped to the source that was read.
+//
+// The uuid is generated rather than derived from the uid, so renaming a manual
+// user loses nothing either.
+func (db *DB) AddManualUser(ctx context.Context, u core.User) (core.User, error) {
+	if strings.TrimSpace(u.UID) == "" {
+		return core.User{}, errors.New("a user needs a uid")
+	}
+	u.Source = core.SourceManual
+	u.Status = core.UserActive
+	if u.SourceUUID == "" {
+		uuid, err := randomUUID()
+		if err != nil {
+			return core.User{}, err
+		}
+		u.SourceUUID = uuid
+	}
+	if u.DisplayName == "" {
+		u.DisplayName = u.UID
+	}
+
+	now := formatTime(time.Now())
+	var id int64
+	err := db.Tx(ctx, func(tx *sql.Tx) error {
+		var existing string
+		err := tx.QueryRowContext(ctx,
+			`SELECT source FROM users WHERE uid = ? COLLATE NOCASE`, u.UID).Scan(&existing)
+		switch {
+		case err == nil:
+			return fmt.Errorf("a %s user with uid %q already exists", existing, u.UID)
+		case !isNoRows(err):
+			return err
+		}
+		newID, _, err := upsertUser(ctx, tx, core.SourceManual, u, now)
+		id = newID
+		return err
+	})
+	if err != nil {
+		return core.User{}, err
+	}
+	u.ID = id
+	return u, nil
 }
 
-func isNoRows(err error) bool { return errors.Is(err, sql.ErrNoRows) }
+// randomUUID is a version 4 UUID. crypto/rand plus formatting beats a
+// dependency for one call site.
+func randomUUID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
+}
+
+// DeleteUser removes a person from Nuno. It never touches provider data: an
+// account simply becomes unmanaged again (FR-8).
+func (db *DB) DeleteUser(ctx context.Context, id int64) (bool, error) {
+	res, err := db.W.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
+	if err != nil {
+		return false, err
+	}
+	affected, err := res.RowsAffected()
+	return affected > 0, err
+}
