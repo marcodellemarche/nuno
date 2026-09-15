@@ -21,6 +21,12 @@ type Store interface {
 	ListLinkIssues(ctx context.Context) ([]core.LinkIssue, error)
 	CheckAdminKey(ctx context.Context, presented core.Secret) (bool, error)
 	CountAdminKeys(ctx context.Context) (int, error)
+
+	LoadPolicy(ctx context.Context) (core.Policy, error)
+	GroupsWithTiers(ctx context.Context) (map[string]string, error)
+	LastRuns(ctx context.Context, limit int) ([]store.RunSummary, error)
+	RecentChanges(ctx context.Context, limit int) ([]store.AuditRow, error)
+	ListAdminKeys(ctx context.Context) ([]store.AdminKeyRow, error)
 }
 
 // usageHandler serves GET /api/v1/usage, the contract a shared dashboard

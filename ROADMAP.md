@@ -69,13 +69,13 @@ Against the captured fixtures, a `standard` tier of 25 percent Nextcloud and 75 
 
 ## M3: apply
 
-- [ ] Applier, idempotent, with dry-run, re-check at apply time and write pacing (FR-32, FR-33, FR-34, FR-35, FR-38b, FR-38c, FR-72)
-- [ ] Shrink guardrail and the unknown-state rule, with exit codes
-- [ ] Audit log tied to runs
-- [ ] UI: edit tier or budget, trigger reconcile, show the last plan and its outcome, act on link issues, manage credentials (FR-19a, FR-50 to FR-57)
-- [ ] Scheduled reconcile, which can never consent to a risky change (FR-36, FR-39)
-- [ ] Webhook notification on failure and on newly guarded changes (FR-60, FR-62, FR-63): the timer must not run unattended without one
-- [ ] Partial reconcile of one user or one provider (FR-37)
+- [x] Applier, idempotent, with dry-run, re-check at apply time and write pacing (FR-32, FR-33, FR-34, FR-35, FR-38b, FR-38c, FR-72)
+- [x] Shrink guardrail and the unknown-state rule, with exit codes
+- [x] Audit log tied to runs
+- [x] UI: edit tier or budget, trigger reconcile, show the last plan and its outcome, act on link issues, manage credentials (FR-19a, FR-50 to FR-57). Plain form posts, which is the half of ADR-0006 that matters: every action works with no JavaScript. HTMX is not vendored yet, because nothing needs a partial update
+- [x] Scheduled reconcile, which can never consent to a risky change (FR-36, FR-39)
+- [x] Webhook notification on failure and on newly guarded changes (FR-60, FR-62, FR-63): the scheduled reconcile refuses to start without one
+- [x] Partial reconcile of one user or one provider (FR-37)
 
 Done when changing a tier in the UI fixes both services, the second run is empty, a shrink is refused without consent, an unknown-state change is refused with consent, and the timer has run for a week without surprising anyone.
 

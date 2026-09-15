@@ -8,6 +8,8 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/marcodellemarche/nuno/internal/core"
@@ -46,6 +48,34 @@ type pageData struct {
 	Providers []providerView
 	Issues    []issueView
 	Warnings  []string
+
+	// Editable is false when no Actor is wired, which makes the page
+	// read-only rather than offering buttons that cannot work (FR-55).
+	Editable bool
+	OK       string
+	Error    string
+
+	Tiers     []tierView
+	Fields    []providerField
+	Groups    map[string]string
+	Users     []core.User
+	Runs      []store.RunSummary
+	Changes   []store.AuditRow
+	Keys      []store.AdminKeyRow
+	Unmanaged []unmanagedView
+}
+
+type tierView struct {
+	Name        string
+	Budget      string
+	IsDefault   bool
+	Allocations map[int64]string
+	Overcommit  bool
+}
+
+type unmanagedView struct {
+	Provider   string
+	ExternalID string
 }
 
 type providerView struct {
@@ -73,7 +103,13 @@ type issueView struct {
 // still lists what it knows (FR-55).
 func pageHandler(opts Options) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		data := pageData{Version: opts.Version, Now: time.Now().UTC()}
+		data := pageData{
+			Version:  opts.Version,
+			Now:      time.Now().UTC(),
+			Editable: opts.Actor != nil,
+			OK:       r.URL.Query().Get("ok"),
+			Error:    r.URL.Query().Get("err"),
+		}
 
 		usage, err := buildUsage(r.Context(), opts)
 		if err != nil {
@@ -105,7 +141,17 @@ func pageHandler(opts Options) http.HandlerFunc {
 		users, err := opts.Store.ListUsers(r.Context())
 		if err == nil {
 			data.Issues = issueViews(r.Context(), opts, providers, users)
+			for _, u := range users {
+				if u.Status == core.UserActive {
+					data.Users = append(data.Users, u)
+				}
+			}
 		}
+		data.Fields = providerFields(providers)
+		data.Tiers, data.Groups = policyViews(r.Context(), opts)
+		data.Runs, data.Changes = historyViews(r.Context(), opts)
+		data.Keys = keyViews(r.Context(), opts)
+		data.Unmanaged = unmanagedViews(data.Issues)
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
@@ -199,4 +245,68 @@ func barWidth(percent *float64) int {
 		return 100
 	}
 	return int(*percent)
+}
+
+func policyViews(ctx context.Context, opts Options) ([]tierView, map[string]string) {
+	policy, err := opts.Store.LoadPolicy(ctx)
+	if err != nil {
+		opts.Log.Error("page: read policy", "error", err)
+		return nil, nil
+	}
+	var views []tierView
+	for _, tier := range policy.Tiers {
+		view := tierView{
+			Name:        tier.Name,
+			Budget:      tier.Budget.String(),
+			IsDefault:   tier.IsDefault,
+			Allocations: map[int64]string{},
+			Overcommit:  tier.Overcommitted(),
+		}
+		if !tier.Budget.IsKnown() {
+			view.Budget = ""
+		}
+		for _, allocation := range tier.Allocations {
+			view.Allocations[allocation.ProviderID] = allocation.Describe()
+		}
+		views = append(views, view)
+	}
+	slices.SortFunc(views, func(a, b tierView) int { return strings.Compare(a.Name, b.Name) })
+
+	groups, err := opts.Store.GroupsWithTiers(ctx)
+	if err != nil {
+		opts.Log.Error("page: read group mappings", "error", err)
+	}
+	return views, groups
+}
+
+func historyViews(ctx context.Context, opts Options) ([]store.RunSummary, []store.AuditRow) {
+	runs, err := opts.Store.LastRuns(ctx, 5)
+	if err != nil {
+		opts.Log.Error("page: read runs", "error", err)
+	}
+	changes, err := opts.Store.RecentChanges(ctx, 10)
+	if err != nil {
+		opts.Log.Error("page: read recent changes", "error", err)
+	}
+	return runs, changes
+}
+
+func keyViews(ctx context.Context, opts Options) []store.AdminKeyRow {
+	keys, err := opts.Store.ListAdminKeys(ctx)
+	if err != nil {
+		opts.Log.Error("page: read admin keys", "error", err)
+	}
+	return keys
+}
+
+// unmanagedViews pulls the accounts an admin can link, so the form next to the
+// issue has something to offer.
+func unmanagedViews(issues []issueView) []unmanagedView {
+	var views []unmanagedView
+	for _, issue := range issues {
+		if issue.Kind == string(core.IssueUnmanaged) {
+			views = append(views, unmanagedView{Provider: issue.Provider, ExternalID: issue.Account})
+		}
+	}
+	return views
 }

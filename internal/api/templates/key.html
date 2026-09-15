@@ -1,0 +1,21 @@
+{{/* SPDX-License-Identifier: AGPL-3.0-or-later */}}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nuno: new key</title>
+<link rel="stylesheet" href="/static/nuno.css">
+</head>
+<body>
+<header><h1>New admin key</h1></header>
+<section class="warnings">
+  <h2>Copy this now</h2>
+  <p>This is the only time it is shown. Nuno stores a hash, so a lost key is rotated, never recovered.</p>
+  <p><code class="key">{{.Value}}</code></p>
+  <p class="muted">Label: {{.Label}}. It is read-only and grants access to <code>/api/v1/usage</code> and nothing else.</p>
+  <p class="muted">For a Homepage <code>customapi</code> widget, send it as <code>Authorization: Bearer &lt;key&gt;</code>.</p>
+</section>
+<p><a href="/">Back</a></p>
+</body>
+</html>

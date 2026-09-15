@@ -23,7 +23,11 @@ type Options struct {
 	Version string
 	DB      Pinger
 	Store   Store
-	Log     *slog.Logger
+	// Actor performs the mutations the page offers. With none the page is
+	// read-only, which is what a misconfigured Nuno shows instead of
+	// crashing (FR-55).
+	Actor Actor
+	Log   *slog.Logger
 
 	// AdminPassword guards the admin surface when no proxy authenticates in
 	// front of it. Empty means the surface relies on the proxy, which is why
@@ -55,6 +59,7 @@ func Routes(opts Options) *http.ServeMux {
 	page := basicAuth(opts.AdminPassword, pageHandler(opts))
 	mux.Handle("GET /{$}", page)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", staticHandler()))
+	registerActions(mux, opts)
 	return mux
 }
 

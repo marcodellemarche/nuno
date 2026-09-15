@@ -13,6 +13,23 @@
   <p class="muted">Storage across every service, in one place. Read only for now: nothing here writes a quota.</p>
 </header>
 
+{{if .OK}}<section class="flash ok"><p>{{.OK}}</p></section>{{end}}
+{{if .Error}}<section class="flash bad"><p>{{.Error}}</p></section>{{end}}
+
+{{if .Editable}}
+<section class="actions">
+  <form method="post" action="/actions/observe">
+    <button type="submit">Read every service now</button>
+    <span class="muted">Reads only. Nothing is written.</span>
+  </form>
+  <form method="post" action="/actions/reconcile">
+    <button type="submit">Reconcile</button>
+    <label><input type="checkbox" name="allow_shrink" value="1"> apply guarded changes</label>
+    <span class="muted">A guarded change lands at or below what somebody already stores, which blocks their uploads. The timer can never do this.</span>
+  </form>
+</section>
+{{end}}
+
 {{if .Warnings}}
 <section class="warnings">
   <h2>Needs attention</h2>
@@ -57,6 +74,20 @@
     </table>
     {{else}}
     <p class="muted">No linked account on any provider.</p>
+    {{end}}
+    {{if $.Editable}}
+    <form method="post" action="/actions/override" class="inline">
+      <input type="hidden" name="user" value="{{.User}}">
+      <label>ceiling on
+        <select name="provider">
+          {{range $.Fields}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+        </select>
+      </label>
+      <input type="text" name="quota" placeholder="100GiB or unlimited" size="16">
+      <button type="submit">Set override</button>
+      <button type="submit" name="clear" value="1">Clear</button>
+      <span class="muted">An override sits above every tier.</span>
+    </form>
     {{end}}
   </article>
   {{end}}
@@ -111,6 +142,172 @@
   </table>
 </section>
 {{end}}
+
+<section>
+  <h2>Tiers</h2>
+  {{if .Tiers}}
+  <table>
+    <thead><tr><th>Tier</th><th>Budget</th><th>Default</th>{{range .Fields}}<th>{{.Name}}</th>{{end}}<th></th></tr></thead>
+    <tbody>
+    {{range .Tiers}}
+      <tr>
+        {{if $.Editable}}
+        <td colspan="99">
+          <form method="post" action="/actions/tier" class="inline">
+            <input type="hidden" name="name" value="{{.Name}}">
+            <strong>{{.Name}}</strong>
+            <label>budget <input type="text" name="budget" value="{{.Budget}}" size="10" placeholder="unset"></label>
+            <label><input type="checkbox" name="is_default" value="1" {{if .IsDefault}}checked{{end}}> default</label>
+            {{$allocations := .Allocations}}
+            {{range $.Fields}}
+              <label>{{.Name}} <input type="text" name="alloc_{{.ID}}" value="{{index $allocations .ID}}" size="8" placeholder="none"></label>
+            {{end}}
+            <button type="submit">Save</button>
+            {{if .Overcommit}}<span class="flag">over-commits</span>{{end}}
+          </form>
+        </td>
+        {{else}}
+        <td>{{.Name}}</td>
+        <td>{{if .Budget}}{{.Budget}}{{else}}unset{{end}}</td>
+        <td>{{if .IsDefault}}yes{{end}}</td>
+        {{$allocations := .Allocations}}
+        {{range $.Fields}}<td>{{with index $allocations .ID}}{{.}}{{else}}&mdash;{{end}}</td>{{end}}
+        <td>{{if .Overcommit}}<span class="flag">over-commits</span>{{end}}</td>
+        {{end}}
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="muted">No tiers yet.</p>
+  {{end}}
+
+  {{if .Editable}}
+  <form method="post" action="/actions/tier" class="inline">
+    <label>new tier <input type="text" name="name" placeholder="standard" size="12" required></label>
+    <label>budget <input type="text" name="budget" placeholder="200GiB" size="10"></label>
+    <label><input type="checkbox" name="is_default" value="1"> default</label>
+    {{range .Fields}}
+      <label>{{.Name}} <input type="text" name="alloc_{{.ID}}" placeholder="25% or 50GiB" size="10"></label>
+    {{end}}
+    <button type="submit">Create</button>
+  </form>
+  {{end}}
+
+  <p class="muted">An empty allocation means the tier says nothing about that service, which is not the
+  same as zero: Nuno leaves it alone. <strong>The most generous ceiling wins, per service, so adding
+  somebody to a stricter tier does not restrict them.</strong> Demoting means removing the generous group.</p>
+
+  {{if .Groups}}
+  <table>
+    <thead><tr><th>Group</th><th>Tier</th></tr></thead>
+    <tbody>{{range $group, $tier := .Groups}}<tr><td>{{$group}}</td><td>{{$tier}}</td></tr>{{end}}</tbody>
+  </table>
+  {{end}}
+</section>
+
+{{if .Unmanaged}}
+{{if .Editable}}
+<section>
+  <h2>Link an account</h2>
+  <p class="muted">Nuno never guesses. A manual link always wins over matching and is never undone automatically.</p>
+  <form method="post" action="/actions/link" class="inline">
+    <label>person
+      <select name="user">{{range .Users}}<option value="{{.UID}}">{{.UID}}</option>{{end}}</select>
+    </label>
+    <label>account
+      <select name="external_id">
+        {{range .Unmanaged}}<option value="{{.ExternalID}}">{{.Provider}}: {{.ExternalID}}</option>{{end}}
+      </select>
+    </label>
+    <label>service
+      <select name="provider">{{range .Fields}}<option value="{{.Name}}">{{.Name}}</option>{{end}}</select>
+    </label>
+    <button type="submit">Link</button>
+    <button type="submit" name="unlink" value="1">Unlink</button>
+  </form>
+</section>
+{{end}}
+{{end}}
+
+{{if .Runs}}
+<section>
+  <h2>Recent runs</h2>
+  <table>
+    <thead><tr><th>Run</th><th>When</th><th>Mode</th><th>Actor</th><th>Consent</th><th>Status</th><th>Outcome</th></tr></thead>
+    <tbody>
+    {{range .Runs}}
+      <tr>
+        <td>{{.ID}}</td>
+        <td>{{.StartedAt.Format "01-02 15:04"}}</td>
+        <td>{{.Mode}}</td>
+        <td>{{.Actor}}</td>
+        <td>{{if .Consent}}shrink{{end}}</td>
+        <td>{{.Status}}</td>
+        <td class="muted">{{.Summary}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+
+  {{if .Changes}}
+  <h2>Recent changes</h2>
+  <table>
+    <thead><tr><th>When</th><th>Person</th><th>Service</th><th>From</th><th>To</th><th>Result</th><th>Detail</th></tr></thead>
+    <tbody>
+    {{range .Changes}}
+      <tr>
+        <td>{{.At.Format "01-02 15:04"}}</td>
+        <td>{{.User}}</td>
+        <td>{{.Provider}}</td>
+        <td>{{.From}}</td>
+        <td>{{.To}}</td>
+        <td><span class="kind kind-{{.Result}}">{{.Result}}</span></td>
+        <td class="muted">{{.Detail}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{end}}
+</section>
+{{end}}
+
+<section>
+  <h2>Keys for the usage API</h2>
+  <p class="muted">Read-only, for a dashboard widget. A key is shown once and stored as a hash.</p>
+  {{if .Keys}}
+  <table>
+    <thead><tr><th>Key</th><th>Label</th><th>Source</th><th>Created</th><th>Last used</th><th>State</th><th></th></tr></thead>
+    <tbody>
+    {{range .Keys}}
+      <tr>
+        <td>{{.ID}}</td>
+        <td>{{.Label}}</td>
+        <td>{{.Source}}</td>
+        <td>{{.CreatedAt.Format "2006-01-02"}}</td>
+        <td>{{if .LastUsedAt}}{{.LastUsedAt.Format "2006-01-02 15:04"}}{{else}}never{{end}}</td>
+        <td>{{if .Revoked}}<span class="bad">revoked</span>{{else}}active{{end}}</td>
+        <td>
+          {{if and $.Editable (not .Revoked)}}
+          <form method="post" action="/actions/keys" class="inline">
+            <button type="submit" name="revoke" value="{{.ID}}">Revoke</button>
+          </form>
+          {{end}}
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="muted">No keys. Without one, <code>/api/v1/usage</code> refuses every request.</p>
+  {{end}}
+  {{if .Editable}}
+  <form method="post" action="/actions/keys" class="inline">
+    <label>label <input type="text" name="label" placeholder="homepage widget" size="20"></label>
+    <button type="submit">Issue a key</button>
+  </form>
+  {{end}}
+</section>
 
 <footer class="muted">
   nuno {{.Version}} &middot; rendered {{.Now.Format "2006-01-02 15:04 UTC"}} &middot;

@@ -32,6 +32,7 @@ func serve(ctx context.Context, a *app) int {
 			Version:         version,
 			DB:              a.db.R,
 			Store:           a.db,
+			Actor:           newActor(a),
 			Log:             a.log,
 			AdminPassword:   a.cfg.AdminPassword,
 			RefreshInterval: a.cfg.RefreshInterval,

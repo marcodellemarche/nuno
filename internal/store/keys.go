@@ -4,11 +4,13 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/marcodellemarche/nuno/internal/core"
@@ -125,4 +127,87 @@ func (db *DB) GetSetting(ctx context.Context, key string) (string, bool, error) 
 		return "", false, err
 	}
 	return value, true, nil
+}
+
+// AdminKeyRow is one key, without its value, which is not recoverable.
+type AdminKeyRow struct {
+	ID         int64
+	Label      string
+	Source     AdminKeySource
+	CreatedAt  time.Time
+	LastUsedAt *time.Time
+	RevokedAt  *time.Time
+}
+
+func (r AdminKeyRow) Revoked() bool { return r.RevokedAt != nil }
+
+// IssueAdminKey mints a key and returns the value exactly once. It is stored
+// only as a hash, so a lost key is rotated and never recovered (FR-56).
+func (db *DB) IssueAdminKey(ctx context.Context, label string) (core.Secret, error) {
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	value := core.Secret(hex.EncodeToString(raw[:]))
+
+	if _, err := db.W.ExecContext(ctx,
+		`INSERT INTO admin_keys (hash, label, source, created_at) VALUES (?, ?, ?, ?)`,
+		HashKey(value), label, string(AdminKeyFromUI), formatTime(time.Now())); err != nil {
+		return "", err
+	}
+	return value, nil
+}
+
+// RevokeAdminKey revokes one by id. An env-sourced key is refused, because an
+// operator must always be able to recover access from the compose file
+// (ADR-0022): removing the variable is how that one goes.
+func (db *DB) RevokeAdminKey(ctx context.Context, id int64) error {
+	var source string
+	err := db.R.QueryRowContext(ctx, `SELECT source FROM admin_keys WHERE id = ?`, id).Scan(&source)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("no key %d", id)
+	}
+	if err != nil {
+		return err
+	}
+	if AdminKeySource(source) == AdminKeyFromEnv {
+		return errors.New("this key comes from NUNO_ADMIN_KEY: remove it from the environment and restart, so recovery from the compose file always works")
+	}
+	_, err = db.W.ExecContext(ctx,
+		`UPDATE admin_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`,
+		formatTime(time.Now()), id)
+	return err
+}
+
+// ListAdminKeys lists the keys, values excluded because they were never
+// stored.
+func (db *DB) ListAdminKeys(ctx context.Context) ([]AdminKeyRow, error) {
+	rows, err := db.R.QueryContext(ctx,
+		`SELECT id, label, source, created_at, last_used_at, revoked_at FROM admin_keys ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var keys []AdminKeyRow
+	for rows.Next() {
+		var key AdminKeyRow
+		var source, createdAt string
+		var lastUsed, revoked sql.NullString
+		if err := rows.Scan(&key.ID, &key.Label, &source, &createdAt, &lastUsed, &revoked); err != nil {
+			return nil, err
+		}
+		key.Source = AdminKeySource(source)
+		if key.CreatedAt, err = parseTime(createdAt); err != nil {
+			return nil, err
+		}
+		if key.LastUsedAt, err = parseTimePtr(lastUsed); err != nil {
+			return nil, err
+		}
+		if key.RevokedAt, err = parseTimePtr(revoked); err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
 }

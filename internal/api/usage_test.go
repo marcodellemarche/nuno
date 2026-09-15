@@ -25,6 +25,11 @@ type fakeStore struct {
 	issues    []core.LinkIssue
 	keys      map[string]bool
 	keyCount  int
+	policy    core.Policy
+	groups    map[string]string
+	runs      []store.RunSummary
+	changes   []store.AuditRow
+	adminKeys []store.AdminKeyRow
 	err       error
 }
 
@@ -40,6 +45,18 @@ func (f *fakeStore) CheckAdminKey(_ context.Context, presented core.Secret) (boo
 	return f.keys[presented.Reveal()], nil
 }
 func (f *fakeStore) CountAdminKeys(context.Context) (int, error) { return f.keyCount, nil }
+
+func (f *fakeStore) LoadPolicy(context.Context) (core.Policy, error) { return f.policy, f.err }
+func (f *fakeStore) GroupsWithTiers(context.Context) (map[string]string, error) {
+	return f.groups, f.err
+}
+func (f *fakeStore) LastRuns(context.Context, int) ([]store.RunSummary, error) { return f.runs, f.err }
+func (f *fakeStore) RecentChanges(context.Context, int) ([]store.AuditRow, error) {
+	return f.changes, f.err
+}
+func (f *fakeStore) ListAdminKeys(context.Context) ([]store.AdminKeyRow, error) {
+	return f.adminKeys, f.err
+}
 
 func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 

@@ -677,3 +677,69 @@ func TestGroupAndUserOverrides(t *testing.T) {
 		t.Errorf("policy = %+v", policy)
 	}
 }
+
+func TestIssueAndRevokeAdminKeys(t *testing.T) {
+	ctx := context.Background()
+	db := migrated(t)
+
+	value, err := db.IssueAdminKey(ctx, "homepage widget")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(value.Reveal()) != 64 {
+		t.Errorf("a key is 32 random bytes hex encoded, got %d characters", len(value.Reveal()))
+	}
+	if ok, _ := db.CheckAdminKey(ctx, value); !ok {
+		t.Fatal("the issued key must work")
+	}
+
+	// Two keys are never the same, and the value is not in the database.
+	second, err := db.IssueAdminKey(ctx, "another")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Reveal() == value.Reveal() {
+		t.Fatal("two issued keys must differ")
+	}
+	var stored string
+	if err := db.R.QueryRowContext(ctx, `SELECT group_concat(hash) FROM admin_keys`).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stored, value.Reveal()) {
+		t.Error("the key value reached the database")
+	}
+
+	keys, err := db.ListAdminKeys(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 2 || keys[0].Label != "homepage widget" || keys[0].Source != AdminKeyFromUI {
+		t.Fatalf("keys = %+v", keys)
+	}
+
+	if err := db.RevokeAdminKey(ctx, keys[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := db.CheckAdminKey(ctx, value); ok {
+		t.Error("a revoked key must stop working")
+	}
+
+	// An env key is not revocable here: removing the variable is how that one
+	// goes, so recovery from the compose file always works.
+	if err := db.EnsureAdminKey(ctx, core.Secret("from-env"), "NUNO_ADMIN_KEY"); err != nil {
+		t.Fatal(err)
+	}
+	keys, _ = db.ListAdminKeys(ctx)
+	var envKey AdminKeyRow
+	for _, key := range keys {
+		if key.Source == AdminKeyFromEnv {
+			envKey = key
+		}
+	}
+	if err := db.RevokeAdminKey(ctx, envKey.ID); err == nil {
+		t.Error("revoking an env key must be refused, naming what to do instead")
+	}
+	if err := db.RevokeAdminKey(ctx, 9999); err == nil {
+		t.Error("a key that does not exist cannot be revoked")
+	}
+}
