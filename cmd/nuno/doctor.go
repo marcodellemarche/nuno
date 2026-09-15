@@ -153,23 +153,33 @@ func (a *app) checkConfiguration(ctx context.Context) []checkResult {
 
 	// The three credential types are named distinctly and are never
 	// interchangeable (ADR-0022).
+	//
+	// The key reaches the database only when `nuno serve` bootstraps it, so an
+	// offline `nuno doctor` sees an empty table even when NUNO_ADMIN_KEY is
+	// set. Reading the environment too is what stops it from telling an
+	// operator to set a variable they already set.
 	count, err := a.db.CountAdminKeys(ctx)
 	switch {
 	case err != nil:
 		checks = append(checks, checkResult{
 			Name: "admin key for the usage API", Status: statusFail, Detail: err.Error(),
 		})
-	case count == 0:
+	case count > 0:
+		checks = append(checks, checkResult{
+			Name: "admin key for the usage API", Status: statusOK,
+			Detail: fmt.Sprintf("%d usable key(s)", count),
+		})
+	case !a.cfg.AdminKey.Empty():
+		checks = append(checks, checkResult{
+			Name: "admin key for the usage API", Status: statusOK,
+			Detail: "NUNO_ADMIN_KEY is set; it is stored on the next `nuno serve`",
+		})
+	default:
 		checks = append(checks, checkResult{
 			Name:   "admin key for the usage API",
 			Status: statusFail,
 			Detail: "GET /api/v1/usage refuses every request without one",
 			Remedy: []string{"# NUNO_ADMIN_KEY=$(openssl rand -hex 32), then restart nuno"},
-		})
-	default:
-		checks = append(checks, checkResult{
-			Name: "admin key for the usage API", Status: statusOK,
-			Detail: fmt.Sprintf("%d usable key(s)", count),
 		})
 	}
 
