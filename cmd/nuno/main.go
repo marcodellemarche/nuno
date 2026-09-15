@@ -16,6 +16,7 @@ import (
 	"github.com/marcodellemarche/nuno/internal/config"
 	"github.com/marcodellemarche/nuno/internal/core"
 	"github.com/marcodellemarche/nuno/internal/identity/ldap"
+	"github.com/marcodellemarche/nuno/internal/notify"
 	"github.com/marcodellemarche/nuno/internal/reconcile"
 	"github.com/marcodellemarche/nuno/internal/store"
 )
@@ -42,6 +43,8 @@ Commands:
   plan                show what a reconcile would change, writing nothing
   explain             print the whole chain that produced somebody's ceiling
   adopt               import what each provider already has, so the first plan is empty
+  reconcile           apply the plan, with --dry-run and --allow-shrink
+  runs                show recent runs and the changes they made
   link                link a person to an account explicitly
   unlink              remove a link
   version             print the version
@@ -87,6 +90,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return withApp(stderr, func(ctx context.Context, a *app) int { return showPlan(ctx, a, args[1:], stdout) })
 	case "explain":
 		return withApp(stderr, func(ctx context.Context, a *app) int { return explain(ctx, a, args[1:], stdout) })
+	case "reconcile", "apply":
+		return withApp(stderr, func(ctx context.Context, a *app) int { return runReconcile(ctx, a, args[1:], stdout) })
+	case "runs":
+		return withApp(stderr, func(ctx context.Context, a *app) int { return showRuns(ctx, a, stdout) })
 	case "adopt":
 		return withApp(stderr, func(ctx context.Context, a *app) int { return adoptQuotas(ctx, a, args[1:], stdout) })
 	case "users":
@@ -136,6 +143,7 @@ type app struct {
 	db        *store.DB
 	directory core.Directory
 	instances []reconcile.Instance
+	notifier  notify.Notifier
 	stderr    io.Writer
 }
 
@@ -204,6 +212,7 @@ func withAppSchema(stderr io.Writer, migrates bool, fn func(context.Context, *ap
 		db:        db,
 		directory: directory,
 		instances: buildProviders(ctx, cfg, registry, db, log),
+		notifier:  buildNotifier(cfg, log),
 		stderr:    stderr,
 	})
 }
@@ -304,4 +313,13 @@ func buildDirectory(cfg *config.Config) (core.Directory, error) {
 		GroupFilter:  cfg.LDAP.GroupFilter,
 		Timeout:      cfg.LDAP.Timeout,
 	})
+}
+
+// buildNotifier wires outbound notification. With no URL configured it is a
+// no-op rather than a nil check at every call site.
+func buildNotifier(cfg *config.Config, log *slog.Logger) notify.Notifier {
+	if cfg.WebhookURL == "" {
+		return notify.Disabled{}
+	}
+	return notify.NewWebhook(cfg.WebhookURL, cfg.PublicURL, cfg.WebhookTimeout, log)
 }

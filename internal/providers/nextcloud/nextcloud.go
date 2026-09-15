@@ -466,3 +466,9 @@ func (p *Provider) appConfigValue(ctx context.Context, app, key string) (string,
 	}
 	return wrapped.Data, nil
 }
+
+// WriteLimit is the measured limit on editUser: 50 calls per 10 minutes. A run
+// that reaches it stops cleanly and resumes next cycle (ADR-0014).
+func (p *Provider) WriteLimit() (int, time.Duration) {
+	return 50, 10 * time.Minute
+}

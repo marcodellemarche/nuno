@@ -50,6 +50,12 @@ func serve(ctx context.Context, a *app) int {
 		refreshLoop(ctx, a)
 	}()
 
+	reconcileDone := make(chan struct{})
+	go func() {
+		defer close(reconcileDone)
+		reconcileLoop(ctx, a)
+	}()
+
 	errc := make(chan error, 1)
 	go func() {
 		a.log.Info("listening", "addr", srv.Addr)
@@ -74,6 +80,7 @@ func serve(ctx context.Context, a *app) int {
 		return ExitError
 	}
 	<-refreshDone
+	<-reconcileDone
 	return ExitClean
 }
 
@@ -148,4 +155,77 @@ func refreshLoop(ctx context.Context, a *app) {
 
 func signalContext() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+}
+
+// reconcileLoop applies on a timer. Without it Nuno reports rather than
+// controls, and a new account keeps whatever default the service gave it
+// (FR-36).
+//
+// It never carries consent: automation cannot cross the shrink guardrail
+// unattended (FR-39). And it refuses to start without a webhook, because a
+// timer that writes quotas and cannot tell anybody when it is blocked is
+// worse than no timer at all.
+func reconcileLoop(ctx context.Context, a *app) {
+	if a.cfg.ReconcileInterval <= 0 {
+		a.log.Info("scheduled reconcile is off, so Nuno reports rather than controls",
+			"fix", "set NUNO_RECONCILE_INTERVAL")
+		return
+	}
+	if !a.notifier.Configured() {
+		a.log.Error("refusing to run the scheduled reconcile without a webhook: a timer that writes quotas must be able to say when it is blocked",
+			"interval", a.cfg.ReconcileInterval, "fix", "set NUNO_WEBHOOK_URL, or unset NUNO_RECONCILE_INTERVAL")
+		return
+	}
+
+	engine := reconcile.New(a.db, a.log).WithNotifier(a.notifier, a.cfg.PublicURL)
+	a.log.Info("scheduled reconcile is on", "interval", a.cfg.ReconcileInterval)
+
+	ticker := time.NewTicker(a.cfg.ReconcileInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runScheduledReconcile(ctx, a, engine)
+		}
+	}
+}
+
+func runScheduledReconcile(ctx context.Context, a *app, engine *reconcile.Engine) {
+	if _, err := engine.SyncIdentity(ctx, a.directory); err != nil {
+		a.log.Error("scheduled identity sync failed", "error", err)
+	}
+	observation, err := engine.Observe(ctx, a.instances)
+	if err != nil {
+		a.log.Error("scheduled observe failed", "error", err)
+		return
+	}
+
+	computedAt := time.Now()
+	result, err := engine.Plan(ctx, a.instances, reconcile.PlanFilter{})
+	if err != nil {
+		a.log.Error("scheduled plan failed", "error", err)
+		return
+	}
+	if result.Plan.Empty() {
+		a.log.Info("scheduled reconcile had nothing to do",
+			"considered", result.Considered, "providers_failed", len(observation.Failed()))
+		return
+	}
+
+	report, err := engine.Apply(ctx, a.instances, result.Plan, reconcile.ApplyOptions{
+		// Never consent. Automation cannot cross this line (FR-39).
+		ConsentShrink: false,
+		Actor:         "schedule",
+		ComputedAt:    computedAt,
+	})
+	if err != nil {
+		a.log.Error("scheduled apply failed", "error", err)
+		return
+	}
+	a.log.Info("scheduled reconcile finished",
+		"applied", report.Applied, "failed", report.Failed,
+		"guarded", report.Guarded, "unknown_state", report.Unknown,
+		"moved", report.Moved, "throttled", report.Throttled, "run", report.RunID)
 }

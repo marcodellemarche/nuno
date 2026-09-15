@@ -40,6 +40,20 @@ type Config struct {
 
 	LDAP      LDAP
 	Providers []Provider
+
+	// WebhookURL receives failure and guardrail notifications. The scheduled
+	// reconcile refuses to run without one: a timer that writes quotas
+	// unattended and cannot tell anybody when it is blocked is worse than no
+	// timer (FR-60, FR-62).
+	WebhookURL     string
+	WebhookTimeout time.Duration
+
+	// ReconcileInterval drives the scheduled reconcile. Zero disables it,
+	// which leaves Nuno reporting rather than controlling (FR-36).
+	ReconcileInterval time.Duration
+
+	// PublicURL names this instance in a notification.
+	PublicURL string
 }
 
 // LDAP is the identity source. It is optional: manual users exist with no
@@ -143,6 +157,28 @@ func Load(env Env) (*Config, error) {
 	cfg.LDAP, err = loadLDAP(env)
 	if err != nil {
 		errs = append(errs, err)
+	}
+
+	cfg.WebhookURL = env.get("NUNO_WEBHOOK_URL", "")
+	cfg.PublicURL = env.get("NUNO_PUBLIC_URL", "")
+	for _, d := range []struct {
+		key    string
+		target *time.Duration
+	}{
+		{"NUNO_WEBHOOK_TIMEOUT", &cfg.WebhookTimeout},
+		{"NUNO_RECONCILE_INTERVAL", &cfg.ReconcileInterval},
+	} {
+		if v := env.get(d.key, ""); v != "" {
+			parsed, err := time.ParseDuration(v)
+			switch {
+			case err != nil:
+				fail("%s %q: %w", d.key, v, err)
+			case parsed < 0:
+				fail("%s cannot be negative, got %s", d.key, parsed)
+			default:
+				*d.target = parsed
+			}
+		}
 	}
 
 	providers, perrs := loadProviders(env)

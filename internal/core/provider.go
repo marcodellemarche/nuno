@@ -154,3 +154,14 @@ type WriterDetector interface {
 	// as absent.
 	UndetectableWriters() []CompetingWriter
 }
+
+// RateLimited is an optional capability for a provider that publishes a write
+// limit. The applier paces under it and treats hitting it as an incomplete
+// run rather than a failure (FR-38c).
+//
+// Nextcloud allows 50 calls per 10 minutes on editUser. A provider that does
+// not implement this is not assumed unlimited: it is assumed unknown, and the
+// applier simply has no ceiling to stop at.
+type RateLimited interface {
+	WriteLimit() (calls int, window time.Duration)
+}

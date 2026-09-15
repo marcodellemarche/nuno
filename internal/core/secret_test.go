@@ -56,6 +56,8 @@ func TestRedactURL(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"https://cloud.example.org/ocs/v2.php", "https://cloud.example.org/ocs/v2.php"},
 		{"https://admin:hunter2@cloud.example.org/", "https://redacted@cloud.example.org/"},
+		// A token in a query string is the usual way one travels.
+		{"https://ntfy.example.org/topic?token=hunter2", "https://ntfy.example.org/topic?token=redacted"},
 		{"://nonsense", redacted},
 	}
 	for _, c := range cases {
@@ -63,7 +65,26 @@ func TestRedactURL(t *testing.T) {
 			t.Errorf("RedactURL(%q) = %q, want %q", c.in, got, c.want)
 		}
 		if strings.Contains(RedactURL(c.in), "hunter2") {
-			t.Errorf("RedactURL(%q) leaked the password", c.in)
+			t.Errorf("RedactURL(%q) leaked the secret", c.in)
+		}
+	}
+}
+
+// Most webhook endpoints put the token in the path, so there the only safe
+// thing to print is the host.
+func TestRedactURLToHost(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"https://hooks.example.org/services/T000/B000/hunter2", "https://hooks.example.org"},
+		{"https://ntfy.example.org/topic?token=hunter2", "https://ntfy.example.org"},
+		{"not a url at all", redacted},
+	}
+	for _, c := range cases {
+		got := RedactURLToHost(c.in)
+		if got != c.want {
+			t.Errorf("RedactURLToHost(%q) = %q, want %q", c.in, got, c.want)
+		}
+		if strings.Contains(got, "hunter2") {
+			t.Errorf("leaked: %q", got)
 		}
 	}
 }

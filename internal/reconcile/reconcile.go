@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/marcodellemarche/nuno/internal/core"
+	"github.com/marcodellemarche/nuno/internal/notify"
 	"github.com/marcodellemarche/nuno/internal/store"
 )
 
@@ -22,13 +23,27 @@ type Instance struct {
 func (i Instance) Name() string { return i.Row.Name }
 
 type Engine struct {
-	db  *store.DB
-	log *slog.Logger
-	now func() time.Time
+	db       *store.DB
+	log      *slog.Logger
+	now      func() time.Time
+	notifier notify.Notifier
+	// host names this instance in a notification, so an event says where it
+	// came from.
+	host string
 }
 
 func New(db *store.DB, log *slog.Logger) *Engine {
-	return &Engine{db: db, log: log, now: time.Now}
+	return &Engine{db: db, log: log, now: time.Now, notifier: notify.Disabled{}}
+}
+
+// WithNotifier attaches outbound notification. Apply notifies from inside, so
+// a caller cannot forget to (FR-60).
+func (e *Engine) WithNotifier(n notify.Notifier, host string) *Engine {
+	if n != nil {
+		e.notifier = n
+	}
+	e.host = host
+	return e
 }
 
 // ProviderResult is what one provider contributed to a cycle.

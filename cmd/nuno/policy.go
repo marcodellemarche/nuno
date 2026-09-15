@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/marcodellemarche/nuno/internal/core"
 	"github.com/marcodellemarche/nuno/internal/reconcile"
@@ -474,5 +475,142 @@ func adoptQuotas(ctx context.Context, a *app, args []string, stdout io.Writer) i
 	if len(skipped) > 0 {
 		return ExitIncomplete
 	}
+	return ExitClean
+}
+
+// runReconcile computes a plan and applies it. It is the CLI half of FR-35,
+// and the exit codes are the contract in FR-72: 0 clean, 1 error, 2 applied
+// but incomplete.
+func runReconcile(ctx context.Context, a *app, args []string, stdout io.Writer) int {
+	var (
+		dryRun  bool
+		consent bool
+		filter  reconcile.PlanFilter
+	)
+	for _, arg := range args {
+		switch {
+		case arg == "--dry-run":
+			dryRun = true
+		case arg == "--allow-shrink":
+			consent = true
+		case strings.HasPrefix(arg, "--user="):
+			filter.UID = strings.TrimPrefix(arg, "--user=")
+		case strings.HasPrefix(arg, "--provider="):
+			filter.Provider = strings.TrimPrefix(arg, "--provider=")
+		default:
+			fmt.Fprintf(a.stderr, "nuno: unknown option %q\n", arg)
+			fmt.Fprintln(a.stderr, "usage: nuno reconcile [--dry-run] [--allow-shrink] [--user=<uid>] [--provider=<name>]")
+			return ExitConfig
+		}
+	}
+
+	engine := reconcile.New(a.db, a.log).WithNotifier(a.notifier, a.cfg.PublicURL)
+
+	// Observe first: a plan is only as good as the state it was computed
+	// from, and apply re-reads anyway.
+	if _, err := engine.SyncIdentity(ctx, a.directory); err != nil {
+		a.log.Error("identity sync failed, continuing with what is known", "error", err)
+	}
+	observation, err := engine.Observe(ctx, a.instances)
+	if err != nil {
+		fmt.Fprintf(a.stderr, "nuno: %v\n", err)
+		return ExitError
+	}
+
+	computedAt := time.Now()
+	result, err := engine.Plan(ctx, a.instances, filter)
+	if err != nil {
+		fmt.Fprintf(a.stderr, "nuno: %v\n", err)
+		return ExitError
+	}
+	writePlan(stdout, result)
+
+	if result.Plan.Empty() {
+		if !observation.OK() {
+			fmt.Fprintf(stdout, "\n%d provider(s) could not be read, so this is not a clean run.\n",
+				len(observation.Failed()))
+			return ExitIncomplete
+		}
+		return ExitClean
+	}
+
+	report, err := engine.Apply(ctx, a.instances, result.Plan, reconcile.ApplyOptions{
+		ConsentShrink: consent,
+		DryRun:        dryRun,
+		Actor:         "cli",
+		ComputedAt:    computedAt,
+	})
+	if err != nil {
+		fmt.Fprintf(a.stderr, "nuno: %v\n", err)
+		return ExitError
+	}
+
+	fmt.Fprintln(stdout)
+	if dryRun {
+		fmt.Fprintf(stdout, "dry run: %d change(s) would be applied. Nothing was written.\n", report.Applied)
+	} else {
+		fmt.Fprintf(stdout, "%s\n", report.Summary())
+	}
+	for _, err := range report.Errors {
+		fmt.Fprintf(stdout, "  error: %v\n", err)
+	}
+	if report.Guarded > 0 && !consent {
+		fmt.Fprintln(stdout, "Re-run with --allow-shrink to apply the guarded changes, once you mean it.")
+	}
+	if report.Throttled {
+		fmt.Fprintln(stdout, "The provider's write limit was reached. The rest resumes on the next run.")
+	}
+
+	switch {
+	case report.Failed > 0 || len(report.Errors) > 0:
+		return ExitError
+	case dryRun:
+		// A non-empty dry run is incomplete by the contract, the same way
+		// terraform plan reports pending work.
+		return ExitIncomplete
+	case report.Incomplete() || !observation.OK():
+		return ExitIncomplete
+	}
+	return ExitClean
+}
+
+// showRuns prints the recent run history and the last changes, which is what
+// the UI shows under the last reconcile (FR-52).
+func showRuns(ctx context.Context, a *app, stdout io.Writer) int {
+	runs, err := a.db.LastRuns(ctx, 10)
+	if err != nil {
+		fmt.Fprintf(a.stderr, "nuno: %v\n", err)
+		return ExitError
+	}
+	if len(runs) == 0 {
+		fmt.Fprintln(stdout, "No runs yet. `nuno plan` records one without changing anything.")
+		return ExitClean
+	}
+
+	table := tabwriter.NewWriter(stdout, 0, 8, 2, ' ', 0)
+	fmt.Fprintln(table, "RUN\tWHEN\tMODE\tACTOR\tCONSENT\tSTATUS\tSUMMARY")
+	for _, run := range runs {
+		consent := ""
+		if run.Consent {
+			consent = "shrink"
+		}
+		fmt.Fprintf(table, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			run.ID, run.StartedAt.Format("2006-01-02 15:04"), run.Mode, run.Actor, consent, run.Status, run.Summary)
+	}
+	table.Flush()
+
+	changes, err := a.db.RecentChanges(ctx, 15)
+	if err != nil || len(changes) == 0 {
+		return ExitClean
+	}
+	fmt.Fprintln(stdout, "\nRecent changes")
+	changeTable := tabwriter.NewWriter(stdout, 0, 8, 2, ' ', 0)
+	fmt.Fprintln(changeTable, "WHEN\tPERSON\tSERVICE\tFROM\tTO\tRESULT\tDETAIL")
+	for _, change := range changes {
+		fmt.Fprintf(changeTable, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			change.At.Format("01-02 15:04"), change.User, change.Provider,
+			change.From.String(), change.To.String(), change.Result, change.Detail)
+	}
+	changeTable.Flush()
 	return ExitClean
 }

@@ -28,9 +28,10 @@ func (s Secret) LogValue() slog.Value         { return slog.StringValue(redacted
 func (s Secret) Reveal() string { return string(s) }
 func (s Secret) Empty() bool    { return s == "" }
 
-// RedactURL strips the userinfo from a URL so it can be logged. An unparseable
-// URL is not echoed back, because whatever made it unparseable may be a
-// credential.
+// RedactURL makes a URL safe to log: the userinfo goes, and so do the query
+// values, because a token in a query string is the usual way one travels. An
+// unparseable URL is not echoed back, because whatever made it unparseable may
+// be a credential.
 func RedactURL(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -39,5 +40,23 @@ func RedactURL(raw string) string {
 	if u.User != nil {
 		u.User = url.User("redacted")
 	}
+	if u.RawQuery != "" {
+		values := u.Query()
+		for key := range values {
+			values.Set(key, "redacted")
+		}
+		u.RawQuery = values.Encode()
+	}
 	return u.String()
+}
+
+// RedactURLToHost keeps only the scheme and the host. It is for a URL whose
+// path is itself a secret, which is how most webhook endpoints work: the token
+// is the path.
+func RedactURLToHost(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return redacted
+	}
+	return u.Scheme + "://" + u.Host
 }
