@@ -122,7 +122,7 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`AGENTS.md`](AGENTS.md). Issues an
 |---|---|
 | Nextcloud | 34.0.4 (OCS Provisioning API) |
 | Immich | v3.2.0 (admin API, major v3) |
-| LLDAP | v0.6.3 |
+| LLDAP | v0.6.3 (LDAP read, not captured) |
 
 Nuno detects each provider's version and warns outside the supported major. It does not refuse to run on an untested minor.
 
