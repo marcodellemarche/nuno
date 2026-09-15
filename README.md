@@ -1,6 +1,6 @@
 # Nuno
 
-> Status: pre-alpha, working. Identity sync, linking, the usage page and endpoint, tiers and allocations, the planner and the applier with its guardrails all run, and the CLI covers the day-two work. Not yet: the HTTP client mode that would let a command run against a live server, a per-person endpoint, and a published image. The design is frozen and every decision is recorded.
+> Status: **v0.1.0** (2026-09-15). Identity sync, linking, the usage page and endpoint, tiers and allocations, the planner and the applier with its guardrails all run, and the CLI covers the day-two work. The image is published at `ghcr.io/marcodellemarche/nuno`. Not yet: the HTTP client mode that would let a command run against a live server, and a per-person endpoint. The design is frozen and every decision is recorded.
 
 Nuno is a quota and usage control plane for self-hosted service stacks.
 
@@ -51,18 +51,18 @@ It connects to an identity provider (LLDAP or any LDAP directory), reads and wri
 | Account link | The mapping between a person and their account on a provider. Nuno never writes to an account it has not linked. |
 | Reconcile | Compute desired vs observed and apply the difference. |
 
-## Planned features
+## Features
 
 ### MVP (v0.1)
 
-- [ ] Providers: Nextcloud (OCS Provisioning API) and Immich (admin API).
-- [ ] Identity: LLDAP / generic LDAP (read users and groups), plus manual users.
-- [ ] Read usage per user per provider, aggregated in one view.
-- [ ] Policies: default tier, per-group tiers, per-user overrides.
-- [ ] Manual reconcile (button and CLI) with dry-run, audit log, and guardrails: never shrink a quota to or below what someone already stores without explicit consent, and never write against state that could not be read.
-- [ ] Admin UI: list users, usage bars, edit budget, trigger reconcile.
-- [ ] A JSON usage endpoint for a shared homepage dashboard, so people see what is left without opening two admin panels.
-- [ ] Webhook notification when a reconcile fails or is blocked.
+- [x] Providers: Nextcloud (OCS Provisioning API) and Immich (admin API).
+- [x] Identity: LLDAP / generic LDAP (read users and groups), plus manual users.
+- [x] Read usage per user per provider, aggregated in one view.
+- [x] Policies: default tier, per-group tiers, per-user overrides.
+- [x] Manual reconcile (button and CLI) with dry-run, audit log, and guardrails: never shrink a quota to or below what someone already stores without explicit consent, and never write against state that could not be read.
+- [x] Admin UI: list users, usage bars, edit budget, trigger reconcile.
+- [x] A JSON usage endpoint for a shared homepage dashboard, so people see what is left without opening two admin panels.
+- [x] Webhook notification when a reconcile fails or is blocked.
 
 ### Later
 
@@ -100,7 +100,7 @@ One container next to the services it manages. See [`docs/deployment.md`](docs/d
 ```yaml
 services:
   nuno:
-    image: ghcr.io/<org>/nuno:latest
+    image: ghcr.io/marcodellemarche/nuno:0.1.0
     env_file: .env
     volumes:
       - ./data:/data          # SQLite DB and config
