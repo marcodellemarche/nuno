@@ -1,0 +1,120 @@
+{{/* SPDX-License-Identifier: AGPL-3.0-or-later */}}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nuno</title>
+<link rel="stylesheet" href="/static/nuno.css">
+</head>
+<body>
+<header>
+  <h1>Nuno</h1>
+  <p class="muted">Storage across every service, in one place. Read only for now: nothing here writes a quota.</p>
+</header>
+
+{{if .Warnings}}
+<section class="warnings">
+  <h2>Needs attention</h2>
+  <ul>
+    {{range .Warnings}}<li>{{.}}</li>{{end}}
+  </ul>
+</section>
+{{end}}
+
+<section>
+  <h2>People</h2>
+  {{if .Usage.Users}}
+  {{range .Usage.Users}}
+  <article class="person">
+    <div class="person-head">
+      <h3>{{.User}}</h3>
+      <span class="totals">
+        {{if .UsedBytes}}{{iec .UsedBytes}}{{else}}unknown{{end}}
+        of
+        {{if .BudgetBytes}}{{iec .BudgetBytes}}{{else}}unlimited{{end}}
+        {{if not .Complete}}<span class="flag" title="At least one provider did not answer, so these totals are partial">partial</span>{{end}}
+      </span>
+    </div>
+    {{if .Providers}}
+    <table>
+      <thead><tr><th>Service</th><th>Used</th><th>Ceiling</th><th>Share</th><th>Status</th></tr></thead>
+      <tbody>
+      {{range .Providers}}
+        <tr>
+          <td>{{.Name}} <span class="muted">{{.Type}}</span></td>
+          <td>{{if .UsedBytes}}{{iec .UsedBytes}}{{else}}&mdash;{{end}}</td>
+          <td>{{quota .QuotaBytes .Status}}</td>
+          <td class="bar-cell">
+            <div class="bar" title="{{if .UsedPercent}}{{.UsedPercent}}%{{else}}no ceiling to measure against{{end}}">
+              <div class="fill status-{{.Status}}" style="width: {{barWidth .UsedPercent}}%"></div>
+            </div>
+          </td>
+          <td><span class="status status-{{.Status}}">{{.Status}}</span></td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <p class="muted">No linked account on any provider.</p>
+    {{end}}
+  </article>
+  {{end}}
+  {{else}}
+  <p class="muted">Nobody yet. Configure an identity source, or add someone with <code>nuno users add &lt;uid&gt; [email]</code>, then run <code>nuno observe</code>.</p>
+  {{end}}
+</section>
+
+<section>
+  <h2>Services</h2>
+  {{if .Providers}}
+  <table>
+    <thead><tr><th>Name</th><th>Type</th><th>Version</th><th>Reachable</th><th>Supported</th><th>Write access</th><th>Last read</th></tr></thead>
+    <tbody>
+    {{range .Providers}}
+      <tr>
+        <td>{{.Name}}</td>
+        <td>{{.Type}}</td>
+        <td>{{if .Version}}{{.Version}}{{else}}&mdash;{{end}}</td>
+        <td>{{if .Reachable}}yes{{else}}<span class="bad">no</span>{{end}}</td>
+        <td>{{if .InSupported}}yes{{else}}<span class="flag">outside</span>{{end}}</td>
+        <td>{{.WriteAccess}}</td>
+        <td>{{if .LastObserve}}{{.LastObserve.Format "2006-01-02 15:04 UTC"}}{{else}}never{{end}}</td>
+      </tr>
+      {{if .LastError}}<tr class="detail"><td colspan="7">{{.LastError}}</td></tr>{{end}}
+      {{if .Degraded}}<tr class="detail"><td colspan="7">Degraded: {{.Degraded}}</td></tr>{{end}}
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="muted">No providers configured.</p>
+  {{end}}
+</section>
+
+{{if .Issues}}
+<section>
+  <h2>Needs a decision</h2>
+  <p class="muted">Nuno never guesses which account belongs to whom, and never writes to one it has not linked.</p>
+  <table>
+    <thead><tr><th>Service</th><th>Kind</th><th>Person</th><th>Account</th><th>Detail</th></tr></thead>
+    <tbody>
+    {{range .Issues}}
+      <tr>
+        <td>{{.Provider}}</td>
+        <td><span class="kind kind-{{.Kind}}">{{.Kind}}</span></td>
+        <td>{{if .Person}}{{.Person}}{{else}}&mdash;{{end}}</td>
+        <td>{{if .Account}}<code>{{.Account}}</code>{{else}}&mdash;{{end}}</td>
+        <td class="muted">{{.Detail}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</section>
+{{end}}
+
+<footer class="muted">
+  nuno {{.Version}} &middot; rendered {{.Now.Format "2006-01-02 15:04 UTC"}} &middot;
+  a number is only as fresh as its status says
+</footer>
+</body>
+</html>

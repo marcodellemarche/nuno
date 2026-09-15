@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/marcodellemarche/nuno/internal/core"
 )
 
 // Pinger is the part of the store /healthz needs. Keeping it this narrow means
@@ -20,7 +22,17 @@ type Pinger interface {
 type Options struct {
 	Version string
 	DB      Pinger
+	Store   Store
 	Log     *slog.Logger
+
+	// AdminPassword guards the admin surface when no proxy authenticates in
+	// front of it. Empty means the surface relies on the proxy, which is why
+	// it binds to loopback by default (NFR-14).
+	AdminPassword core.Secret
+
+	// RefreshInterval decides when a reading becomes stale, at twice this
+	// value (ADR-0022).
+	RefreshInterval time.Duration
 }
 
 // Routes builds the admin surface. It binds to localhost unless the
@@ -29,6 +41,20 @@ type Options struct {
 func Routes(opts Options) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", healthz(opts))
+
+	if opts.Store == nil {
+		// Without a store there is nothing to serve but health, which is
+		// still worth answering.
+		return mux
+	}
+
+	// Read-only, machine facing, and rate limited so a leaked key cannot be
+	// brute forced or used to hammer the providers' numbers.
+	mux.HandleFunc("GET /api/v1/usage", usageHandler(opts, newLimiter(60, 20)))
+
+	page := basicAuth(opts.AdminPassword, pageHandler(opts))
+	mux.Handle("GET /{$}", page)
+	mux.Handle("GET /static/", http.StripPrefix("/static/", staticHandler()))
 	return mux
 }
 

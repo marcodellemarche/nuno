@@ -1,0 +1,126 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ *
+ * One hand-written stylesheet, embedded in the binary. No Tailwind: a CDN
+ * breaks an offline container and the standalone CLI is a build step with a
+ * downloaded binary, neither of which an admin panel of lists and bars
+ * justifies (ADR-0006).
+ */
+
+:root {
+  --bg: #fbfbfa;
+  --fg: #1c1c1a;
+  --muted: #6b6b66;
+  --line: #e2e2dd;
+  --card: #ffffff;
+  --ok: #3f7d4f;
+  --warn: #9a6b1f;
+  --bad: #9c3a34;
+  --track: #ecece8;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15161a;
+    --fg: #e6e6e3;
+    --muted: #9a9a95;
+    --line: #2b2d33;
+    --card: #1b1d22;
+    --ok: #6fae7d;
+    --warn: #d2a250;
+    --bad: #d9756c;
+    --track: #24262c;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0 auto;
+  padding: 2rem 1.25rem 4rem;
+  max-width: 60rem;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+h1 { font-size: 1.5rem; margin: 0 0 .25rem; }
+h2 { font-size: 1.05rem; margin: 2rem 0 .75rem; font-weight: 600; }
+h3 { font-size: 1rem; margin: 0; font-weight: 600; }
+
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; }
+
+.muted { color: var(--muted); }
+.bad { color: var(--bad); }
+
+header p { margin: 0; }
+
+.warnings {
+  margin-top: 1.5rem;
+  padding: .75rem 1rem;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--warn);
+  border-radius: 4px;
+  background: var(--card);
+}
+.warnings h2 { margin: 0 0 .5rem; font-size: .95rem; }
+.warnings ul { margin: 0; padding-left: 1.1rem; }
+.warnings li { margin: .2rem 0; }
+
+.person {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  padding: 1rem;
+  margin-bottom: .75rem;
+}
+.person-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: .5rem;
+}
+.totals { font-variant-numeric: tabular-nums; }
+
+table { width: 100%; border-collapse: collapse; }
+th, td {
+  text-align: left;
+  padding: .4rem .5rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+th { font-weight: 600; font-size: .8rem; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+td { font-variant-numeric: tabular-nums; }
+tr:last-child td { border-bottom: none; }
+tr.detail td { color: var(--muted); font-size: .9em; padding-top: 0; }
+
+.bar-cell { width: 30%; min-width: 6rem; }
+.bar {
+  height: .5rem;
+  background: var(--track);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.fill { height: 100%; background: var(--ok); }
+
+.status, .flag, .kind {
+  font-size: .75rem;
+  padding: .1rem .4rem;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+.status-ok { color: var(--ok); }
+.status-stale { color: var(--warn); }
+.status-unknown { color: var(--warn); }
+.status-unavailable { color: var(--bad); }
+.fill.status-stale { background: var(--warn); }
+.fill.status-unknown, .fill.status-unavailable { background: var(--muted); }
+.flag { color: var(--warn); }
+
+.kind-unmanaged { color: var(--muted); }
+.kind-unlinked { color: var(--warn); }
+.kind-ambiguous, .kind-stale, .kind-dangling { color: var(--bad); }
+
+footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line); font-size: .85rem; }
