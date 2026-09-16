@@ -135,7 +135,7 @@ tr:last-child td { border-bottom: none; }
   color: var(--fg);
 }
 .warnings ul { margin: 0; padding-left: 1.1rem; }
-.warnings li { margin: .2rem 0; }
+.warnings li { margin: .2rem 0; overflow-wrap: anywhere; }
 
 footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line); font-size: .85rem; color: var(--muted); }
 
@@ -338,4 +338,114 @@ code.key {
   border-radius: 4px;
   word-break: break-all;
   font-size: .95rem;
+}
+
+/* Small screens: the desktop layout is a grid of columns and a row of tabs,
+   neither of which fits a phone. Below, every table becomes a stack of
+   labelled rows instead of shrinking columns until they are unreadable. */
+@media (max-width: 700px) {
+  .page { padding: 1.25rem 1rem 2rem; }
+
+  .tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab { flex: none; }
+
+  .head-row { flex-direction: column; align-items: flex-start; gap: .6rem; }
+  .toolbar { width: 100%; }
+  .search { width: 100%; }
+  .search input { width: auto; flex: 1; }
+
+  .card-head { flex-wrap: wrap; }
+  .totals { margin-left: 0; flex-basis: 100%; justify-content: space-between; }
+
+  /* iOS zooms in on any input under 16px on focus; the desktop size is a
+     deliberate density choice, so this only overrides it below the phone
+     breakpoint. */
+  input[type="text"], input[type="number"], select, .edit-form input.q { font-size: 16px; }
+  .icon-btn { padding: .45rem; }
+
+  /* One stacking rule, reused by every wide table: header row hidden, each
+     cell on its own line with its column name as a label. Rows that use
+     colspan for a divider or a ghost "add" affordance are excluded — they
+     have one cell, not a record, and read fine as a plain block. */
+  .card table, .page-accounts table, .table-runs, .table-changes,
+  .card thead, .page-accounts thead, .table-runs thead, .table-changes thead,
+  .card tbody, .page-accounts tbody, .table-runs tbody, .table-changes tbody,
+  .card tr, .page-accounts tr, .table-runs tr, .table-changes tr,
+  .card th, .page-accounts th, .table-runs th, .table-changes th,
+  .card td, .page-accounts td, .table-runs td, .table-changes td {
+    display: block;
+  }
+  .card thead, .page-accounts thead, .table-runs thead, .table-changes thead { display: none; }
+  .card tr, .page-accounts tr:not(.divider), .table-runs tr, .table-changes tr {
+    padding: .6rem 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .card tr:last-child, .page-accounts tr:last-child, .table-runs tr:last-child, .table-changes tr:last-child {
+    border-bottom: none;
+  }
+  .card td, .page-accounts tr:not(.divider) td, .table-runs td, .table-changes td {
+    padding: .25rem 0;
+    border: none;
+  }
+  .card td::before, .page-accounts tr:not(.divider) td::before, .table-runs td::before, .table-changes td::before {
+    display: block;
+    color: var(--muted);
+    font-size: .72rem;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    margin-bottom: .15rem;
+  }
+  .card tr.ghost-row td::before { content: none; }
+
+  .card td:nth-of-type(1)::before { content: "Service"; }
+  .card td:nth-of-type(2)::before { content: "Used"; }
+  .card td:nth-of-type(3)::before { content: "Ceiling"; }
+  .card td:nth-of-type(4)::before { content: "Share"; }
+  .card td:nth-of-type(5)::before { content: "Status"; }
+
+  .page-accounts tr:not(.divider) td:nth-of-type(1)::before { content: "Account"; }
+  .page-accounts tr:not(.divider) td:nth-of-type(2)::before { content: "Service"; }
+  .page-accounts tr:not(.divider) td:nth-of-type(3)::before { content: "Person"; }
+  .page-accounts tr:not(.divider) td:nth-of-type(4)::before { content: "Reason"; }
+
+  .table-runs td:nth-of-type(1)::before { content: "Run"; }
+  .table-runs td:nth-of-type(2)::before { content: "When"; }
+  .table-runs td:nth-of-type(3)::before { content: "Mode"; }
+  .table-runs td:nth-of-type(4)::before { content: "Actor"; }
+  .table-runs td:nth-of-type(5)::before { content: "Consent"; }
+  .table-runs td:nth-of-type(6)::before { content: "Status"; }
+  .table-runs td:nth-of-type(7)::before { content: "Outcome"; }
+
+  .table-changes td:nth-of-type(1)::before { content: "When"; }
+  .table-changes td:nth-of-type(2)::before { content: "Person"; }
+  .table-changes td:nth-of-type(3)::before { content: "Service"; }
+  .table-changes td:nth-of-type(4)::before { content: "From"; }
+  .table-changes td:nth-of-type(5)::before { content: "To"; }
+  .table-changes td:nth-of-type(6)::before { content: "Result"; }
+  .table-changes td:nth-of-type(7)::before { content: "Detail"; }
+
+  /* Services table (Keys) shares the same page-wide table, so it is scoped by
+     page rather than a class of its own. */
+  .page-services table, .page-services thead, .page-services tbody, .page-services tr, .page-services th, .page-services td {
+    display: block;
+  }
+  .page-services thead { display: none; }
+  .page-services tr { padding: .6rem 0; border-bottom: 1px solid var(--line); }
+  .page-services tr:last-child { border-bottom: none; }
+  .page-services td { padding: .25rem 0; border: none; }
+  .page-services td::before {
+    display: block;
+    color: var(--muted);
+    font-size: .72rem;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    margin-bottom: .15rem;
+  }
+  .page-services td:nth-of-type(1)::before { content: "Key"; }
+  .page-services td:nth-of-type(2)::before { content: "Label"; }
+  .page-services td:nth-of-type(3)::before { content: "Source"; }
+  .page-services td:nth-of-type(4)::before { content: "Created"; }
+  .page-services td:nth-of-type(5)::before { content: "Last used"; }
+  .page-services td:nth-of-type(6)::before { content: "State"; }
 }
