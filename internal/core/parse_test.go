@@ -84,3 +84,33 @@ func TestAllocationDescribeRoundTrips(t *testing.T) {
 		}
 	}
 }
+
+// The editor shows the unit outside the field, so a bare number there is GiB.
+// Anything with an explicit unit, or "unlimited", still means what it says.
+func TestParseInGiB(t *testing.T) {
+	if got, err := ParseSizeInGiB("50"); err != nil || !got.Equal(MustBytes(50<<30)) {
+		t.Errorf("ParseSizeInGiB(50) = %v, %v, want 50 GiB", got, err)
+	}
+	if got, err := ParseSizeInGiB("1.5"); err != nil || !got.Equal(MustBytes(1610612736)) {
+		t.Errorf("ParseSizeInGiB(1.5) = %v, %v, want 1.5 GiB", got, err)
+	}
+	if got, err := ParseSizeInGiB("unlimited"); err != nil || !got.IsUnlimited() {
+		t.Errorf("ParseSizeInGiB(unlimited) = %v, %v, want unlimited", got, err)
+	}
+	if got, err := ParseAllocationInGiB("50"); err != nil || got.Mode != ModeAbsolute || got.Value != 50<<30 {
+		t.Errorf("ParseAllocationInGiB(50) = %+v, %v, want absolute 50 GiB", got, err)
+	}
+	if got, err := ParseAllocationInGiB("25%"); err != nil || got.Mode != ModePercent || got.Value != 25 {
+		t.Errorf("ParseAllocationInGiB(25%%) = %+v, %v, want the explicit percentage kept", got, err)
+	}
+}
+
+func TestFormatGiBNumberRoundTrips(t *testing.T) {
+	for _, n := range []int64{0, 1 << 30, 25 << 30, 150 << 30, 1610612736} {
+		text := FormatGiBNumber(n)
+		back, err := ParseSizeInGiB(text)
+		if err != nil || !back.IsBytes() || back.Bytes != n {
+			t.Errorf("FormatGiBNumber(%d) = %q, which parses to %v, %v", n, text, back, err)
+		}
+	}
+}

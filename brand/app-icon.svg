@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <rect width="120" height="120" rx="26" fill="#3f7d4f"/>
+  <g transform="translate(15 15) scale(0.75)">
+    <g fill="none" stroke-width="20" stroke-linecap="round">
+      <path class="nuno-fg" d="M73.60 18.15A44 44 0 1 1 46.40 18.15" stroke="#ffffff"/>
+      <path d="M73.60 18.15A44 44 0 0 1 95.60 34.14" stroke="#ffffff"/>
+    </g>
+  </g>
+</svg>

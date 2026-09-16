@@ -29,3 +29,8 @@ CLAUDE.md
 .idea/
 .vscode/
 .DS_Store
+
+# Brand pipeline: the font is downloaded on first run and favicon-fg.svg is an
+# intermediate the generator writes; both are rebuilt by brand/generate.py.
+brand/SpaceGrotesk.ttf
+brand/favicon-fg.svg

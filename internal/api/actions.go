@@ -38,7 +38,7 @@ func registerActions(mux *http.ServeMux, opts Options) {
 		return
 	}
 	guard := func(next http.HandlerFunc) http.Handler {
-		return basicAuth(opts.AdminPassword, sameOrigin(opts, next))
+		return proxy(opts.ProxySecret, basicAuth(opts.AdminPassword, sameOrigin(opts, next)))
 	}
 	mux.Handle("POST /actions/reconcile", guard(actionReconcile(opts)))
 	mux.Handle("POST /actions/observe", guard(actionObserve(opts)))
@@ -83,15 +83,27 @@ func redirect(w http.ResponseWriter, r *http.Request, kind, message string) {
 // so it can swap it in without a reload. One route, two shapes, and the form
 // works with no JavaScript at all (ADR-0006, ADR-0030).
 func respond(w http.ResponseWriter, r *http.Request, kind, message, value string) {
+	respondWith(w, r, kind, message, value, nil)
+}
+
+// respondWith is respond plus derived numbers the page shows but the edited
+// field does not: a budget that is the sum of the ceilings, a person's total.
+// The inline editor patches them in place, so the page stays correct without a
+// reload.
+func respondWith(w http.ResponseWriter, r *http.Request, kind, message, value string, extra map[string]string) {
 	if r.Header.Get("X-Requested-With") == "nuno-inline-edit" {
 		code := http.StatusOK
 		if kind == "err" {
 			code = http.StatusBadRequest
 		}
+		body := map[string]string{kind: message, "value": value}
+		for key, v := range extra {
+			body[key] = v
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(code)
-		json.NewEncoder(w).Encode(map[string]string{kind: message, "value": value})
+		json.NewEncoder(w).Encode(body)
 		return
 	}
 	target := returnTo(r) + "?" + kind + "=" + url.QueryEscape(message)
@@ -111,7 +123,7 @@ func returnTo(r *http.Request) string {
 func actionReconcile(opts Options) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
-			redirect(w, r, "err", "malformed form")
+			redirect(w, r, "err", "Malformed form")
 			return
 		}
 		consent := r.PostFormValue("allow_shrink") != ""
@@ -146,19 +158,19 @@ func actionObserve(opts Options) http.HandlerFunc {
 			redirect(w, r, "err", err.Error())
 			return
 		}
-		redirect(w, r, "ok", "read every provider again")
+		redirect(w, r, "ok", "Read every provider again")
 	}
 }
 
 func actionTier(opts Options) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
-			redirect(w, r, "err", "malformed form")
+			redirect(w, r, "err", "Malformed form")
 			return
 		}
 		name := strings.TrimSpace(r.PostFormValue("name"))
 		if name == "" {
-			redirect(w, r, "err", "a tier needs a name")
+			redirect(w, r, "err", "A tier needs a name")
 			return
 		}
 
@@ -166,7 +178,7 @@ func actionTier(opts Options) http.HandlerFunc {
 		if budget := strings.TrimSpace(r.PostFormValue("budget")); budget != "" {
 			parsed, err := core.ParseSize(budget)
 			if err != nil {
-				redirect(w, r, "err", "budget: "+err.Error())
+				redirect(w, r, "err", "Budget: "+err.Error())
 				return
 			}
 			tier.Budget = parsed
@@ -174,6 +186,11 @@ func actionTier(opts Options) http.HandlerFunc {
 
 		// One field per provider, named alloc_<id>. An empty one means the
 		// tier says nothing about that provider, which is not zero (FR-17).
+		// The editor shows the unit outside the field, so a bare number is
+		// GiB; percentages are no longer offered, and a tier whose ceilings
+		// are absolute takes their sum as its budget.
+		var absolute int64
+		hasPercent, hasUnlimited := false, false
 		for key, values := range r.PostForm {
 			id, ok := strings.CutPrefix(key, "alloc_")
 			if !ok || len(values) == 0 || strings.TrimSpace(values[0]) == "" {
@@ -183,31 +200,56 @@ func actionTier(opts Options) http.HandlerFunc {
 			if err != nil {
 				continue
 			}
-			allocation, err := core.ParseAllocation(values[0])
+			allocation, err := core.ParseAllocationInGiB(values[0])
 			if err != nil {
-				redirect(w, r, "err", fmt.Sprintf("allocation %q: %v", values[0], err))
+				redirect(w, r, "err", fmt.Sprintf("Allocation %q: %v", values[0], err))
 				return
 			}
 			allocation.ProviderID = providerID
 			tier.Allocations = append(tier.Allocations, allocation)
+			switch allocation.Mode {
+			case core.ModeAbsolute:
+				absolute += allocation.Value
+			case core.ModePercent:
+				hasPercent = true
+			case core.ModeUnlimited:
+				hasUnlimited = true
+			}
+		}
+		if len(tier.Allocations) > 0 && !hasPercent && !hasUnlimited {
+			budget, err := core.BytesQuota(absolute)
+			if err != nil {
+				redirect(w, r, "err", err.Error())
+				return
+			}
+			tier.Budget = budget
 		}
 
 		if err := opts.Actor.SaveTier(r.Context(), tier); err != nil {
 			redirect(w, r, "err", err.Error())
 			return
 		}
-		message := "saved tier " + name + ". Run a reconcile to apply it."
+		message := "Saved tier " + name + ". Run a reconcile to apply it."
 		if tier.Overcommitted() {
 			message += " Its percentages add up to more than 100, which over-commits deliberately."
 		}
-		respond(w, r, "ok", message, editedAllocation(r, tier))
+		// The budget is the sum of the ceilings now, so the number at the top of
+		// the card changes when one of them does.
+		budgetText := "no budget"
+		if tier.Budget.IsKnown() {
+			budgetText = tier.Budget.String()
+		}
+		respondWith(w, r, "ok", message, editedAllocation(r, tier), map[string]string{
+			"budget":     budgetText,
+			"overcommit": boolFlag(tier.Overcommitted()),
+		})
 	}
 }
 
 func actionOverride(opts Options) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
-			redirect(w, r, "err", "malformed form")
+			redirect(w, r, "err", "Malformed form")
 			return
 		}
 		uid := strings.TrimSpace(r.PostFormValue("user"))
@@ -217,7 +259,7 @@ func actionOverride(opts Options) http.HandlerFunc {
 
 		quota := core.Unknown()
 		if !clear {
-			parsed, err := core.ParseSize(value)
+			parsed, err := core.ParseSizeInGiB(value)
 			if err != nil {
 				redirect(w, r, "err", err.Error())
 				return
@@ -229,20 +271,119 @@ func actionOverride(opts Options) http.HandlerFunc {
 			return
 		}
 		if clear {
-			respond(w, r, "ok",
-				fmt.Sprintf("cleared the override for %s on %s: their tier decides again", uid, provider), "—")
+			respondWith(w, r, "ok",
+				fmt.Sprintf("Cleared the override for %s on %s: their tier decides again", uid, provider), "—",
+				totalsFor(r, opts, uid, provider))
 			return
 		}
-		respond(w, r, "ok",
-			fmt.Sprintf("%s now has %s on %s, above any tier. Run a reconcile to apply it.", uid, quota, provider),
-			quota.String())
+		respondWith(w, r, "ok",
+			fmt.Sprintf("Override saved: %s now has %s on %s, above any tier. Run a reconcile to apply it.", uid, quota, provider),
+			quota.String(), totalsFor(r, opts, uid, provider))
 	}
+}
+
+// totalsFor recomputes everything a person's card shows after an override
+// changed one of the ceilings: the header totals, the edited row's share bar,
+// and whether the row still deserves the "override" tag. An empty map is fine:
+// the edited value still lands, only the derived parts would be stale.
+func totalsFor(r *http.Request, opts Options, uid, provider string) map[string]string {
+	ctx := r.Context()
+	usage, err := buildUsage(ctx, opts, false)
+	if err != nil {
+		opts.Log.Error("override: rebuild usage for the totals", "error", err)
+		return nil
+	}
+	for _, user := range usage.Users {
+		if user.User != uid {
+			continue
+		}
+		used, budget := "unknown", "unlimited"
+		if user.UsedBytes != nil {
+			used = core.FormatIEC(*user.UsedBytes)
+		}
+		if user.BudgetBytes != nil {
+			budget = core.FormatIEC(*user.BudgetBytes)
+		}
+		percent := barWidth(user.UsedPercent)
+		extras := map[string]string{
+			"used":    used,
+			"budget":  budget,
+			"percent": strconv.Itoa(percent),
+			"fill":    totalFill(percent),
+		}
+		for _, p := range user.Providers {
+			if p.Name != provider {
+				continue
+			}
+			rowPercent := barWidth(p.UsedPercent)
+			extras["row_percent"] = strconv.Itoa(rowPercent)
+			extras["row_fill"] = fillFor(rowPercent, p.Status)
+			break
+		}
+		extras["override"] = overrideTag(ctx, opts, uid, provider)
+		return extras
+	}
+	return nil
+}
+
+// overrideTag is "1" when the override on this provider changes the outcome
+// and the row should say so, "0" when it is the tier's own value in disguise.
+func overrideTag(ctx context.Context, opts Options, uid, providerName string) string {
+	users, err := opts.Store.ListUsers(ctx)
+	if err != nil {
+		return "0"
+	}
+	var user core.User
+	found := false
+	for _, u := range users {
+		if u.UID == uid {
+			user, found = u, true
+			break
+		}
+	}
+	if !found {
+		return "0"
+	}
+	providers, err := opts.Store.ListProviders(ctx)
+	if err != nil {
+		return "0"
+	}
+	var providerID int64
+	known := false
+	for _, p := range providers {
+		if p.Name == providerName {
+			providerID, known = p.ID, true
+			break
+		}
+	}
+	if !known {
+		return "0"
+	}
+	policy, err := opts.Store.LoadPolicy(ctx)
+	if err != nil {
+		return "0"
+	}
+	up, _, err := opts.Store.UserPolicy(ctx, user.ID)
+	if err != nil {
+		return "0"
+	}
+	if _, ok := up.ProviderOverrides[providerID]; !ok || overrideRedundant(user, providerID, policy, up) {
+		return "0"
+	}
+	return "1"
+}
+
+func boolFlag(b bool) string {
+	if b {
+		return "1"
+	}
+	return "0"
 }
 
 func actionLink(opts Options) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
-			redirect(w, r, "err", "malformed form")
+			redirect(w, r, "err", "Malformed form")
 			return
 		}
 		uid := strings.TrimSpace(r.PostFormValue("user"))
@@ -255,10 +396,10 @@ func actionLink(opts Options) http.HandlerFunc {
 			return
 		}
 		if unlink {
-			redirect(w, r, "ok", fmt.Sprintf("unlinked %s from %s", uid, provider))
+			redirect(w, r, "ok", fmt.Sprintf("Unlinked %s from %s", uid, provider))
 			return
 		}
-		redirect(w, r, "ok", fmt.Sprintf("linked %s to %s on %s", uid, externalID, provider))
+		redirect(w, r, "ok", fmt.Sprintf("Linked %s to %s on %s", uid, externalID, provider))
 	}
 }
 
@@ -289,14 +430,14 @@ func editedAllocation(r *http.Request, tier core.Tier) string {
 func actionGroup(opts Options) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
-			redirect(w, r, "err", "malformed form")
+			redirect(w, r, "err", "Malformed form")
 			return
 		}
 		group := strings.TrimSpace(r.PostFormValue("group"))
 		tier := strings.TrimSpace(r.PostFormValue("tier"))
 		unmap := r.PostFormValue("unmap") != ""
 		if group == "" {
-			redirect(w, r, "err", "no group was chosen")
+			redirect(w, r, "err", "No group was chosen")
 			return
 		}
 
@@ -306,10 +447,10 @@ func actionGroup(opts Options) http.HandlerFunc {
 		}
 		if unmap {
 			respond(w, r, "ok",
-				"that group no longer maps to a tier, so its members fall back to the default one", "")
+				"That group no longer maps to a tier, so its members fall back to the default one", "")
 			return
 		}
-		respond(w, r, "ok", "that group now follows "+tier+". Run a reconcile to apply it.", "")
+		respond(w, r, "ok", "That group now follows "+tier+". Run a reconcile to apply it.", "")
 	}
 }
 
@@ -319,21 +460,21 @@ func actionGroup(opts Options) http.HandlerFunc {
 func actionKeys(opts Options) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
-			redirect(w, r, "err", "malformed form")
+			redirect(w, r, "err", "Malformed form")
 			return
 		}
 
 		if id := strings.TrimSpace(r.PostFormValue("revoke")); id != "" {
 			keyID, err := strconv.ParseInt(id, 10, 64)
 			if err != nil {
-				redirect(w, r, "err", "not a key id")
+				redirect(w, r, "err", "Not a key id")
 				return
 			}
 			if err := opts.Actor.RevokeKey(r.Context(), keyID); err != nil {
 				redirect(w, r, "err", err.Error())
 				return
 			}
-			redirect(w, r, "ok", "revoked that key. Anything using it stops working now.")
+			redirect(w, r, "ok", "Revoked that key. Anything using it stops working now.")
 			return
 		}
 

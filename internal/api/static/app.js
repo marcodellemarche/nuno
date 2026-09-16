@@ -50,12 +50,86 @@
     return pill;
   }
 
+  // A budget, a share bar and the over-commit flag are all derived from the
+  // ceilings, so editing one ceiling changes numbers that live elsewhere on
+  // the card. The server sends the new values back and they are patched in
+  // place, or the page would show a stale total until the next reload.
+  function applyTotals(form, body) {
+    var card = form.closest(".card");
+    if (card && body.budget && body.used) {
+      var totals = card.querySelector(".totals > span");
+      if (totals) {
+        totals.textContent = body.used + " of " + body.budget;
+      }
+      var totalFill = card.querySelector(".total-fill");
+      if (totalFill && body.percent) {
+        totalFill.style.width = body.percent + "%";
+        totalFill.className = "total-fill " + (body.fill || "");
+      }
+    }
+
+    // The edited row's own share bar, and its override tag: an override equal
+    // to the tier's value changes nothing and must not be labelled.
+    var row = form.closest("tr");
+    if (row && body.row_percent) {
+      var bar = row.querySelector(".bar");
+      if (bar) {
+        bar.title = body.row_percent + "%";
+      }
+      var rowFill = row.querySelector(".bar .fill");
+      if (rowFill) {
+        rowFill.style.width = body.row_percent + "%";
+        rowFill.className = "fill " + (body.row_fill || "");
+      }
+    }
+    if (row && body.override !== undefined) {
+      var cell = form.parentElement;
+      var pill = cell ? cell.querySelector(".override-pill") : null;
+      if (body.override === "1" && !pill && cell) {
+        pill = document.createElement("span");
+        pill.className = "tier-pill override-pill";
+        pill.title = "Set for this person only, above their tier";
+        pill.textContent = "override";
+        form.insertAdjacentElement("afterend", pill);
+      } else if (body.override === "0" && pill) {
+        pill.remove();
+      }
+    }
+
+    var tier = form.closest(".tier-card");
+    if (tier && body.budget) {
+      var count = tier.querySelector(".member-count");
+      if (count) {
+        count.textContent = body.budget;
+      }
+    }
+    if (tier && body.overcommit !== undefined) {
+      var flag = tier.querySelector(".overcommit");
+      if (body.overcommit === "1" && !flag) {
+        var head = tier.querySelector(".tier-card-head");
+        if (head) {
+          flag = document.createElement("span");
+          flag.className = "flag overcommit";
+          flag.title = "Its percentages add up to more than 100, which over-commits deliberately";
+          flag.textContent = "over-commits";
+          head.appendChild(flag);
+        }
+      } else if (body.overcommit === "0" && flag) {
+        flag.remove();
+      }
+    }
+  }
+
   function enhanceEdit(form) {
     var input = form.querySelector("input.q");
     var confirm = form.querySelector("button[type=submit]");
     if (!input || !confirm) {
       return;
     }
+
+    // The unit lives outside the input, in a wrapper that hides with it, so a
+    // resting row does not show "50 GiB" and a stray "GiB" beside it.
+    var unit = input.closest(".unit-field");
 
     var display = document.createElement("button");
     display.type = "button";
@@ -81,7 +155,11 @@
 
     function rest() {
       display.hidden = false;
-      input.hidden = true;
+      if (unit) {
+        unit.hidden = true;
+      } else {
+        input.hidden = true;
+      }
       confirm.hidden = true;
       cancel.hidden = true;
       error.hidden = true;
@@ -89,7 +167,11 @@
 
     function edit() {
       display.hidden = true;
-      input.hidden = false;
+      if (unit) {
+        unit.hidden = false;
+      } else {
+        input.hidden = false;
+      }
       confirm.hidden = false;
       cancel.hidden = false;
       input.focus();
@@ -122,6 +204,7 @@
           committed = input.value;
           show(body.value || input.value || "—");
           rest();
+          applyTotals(form, body);
           display.insertAdjacentElement("afterend", savedPill());
         })
         .catch(function (failure) {
@@ -149,6 +232,15 @@
               return;
             }
           }
+          if (form.dataset.onOk === "reload") {
+            // A mapping moves a chip between cards, which only a reload can
+            // draw. The pill is what the eye catches in the meantime.
+            form.insertAdjacentElement("afterend", savedPill());
+            window.setTimeout(function () {
+              window.location.reload();
+            }, 700);
+            return;
+          }
           window.location.reload();
         })
         .catch(function (failure) {
@@ -157,6 +249,39 @@
     });
   }
 
+  // The search filters the cards as the person types, so the list narrows
+  // before Enter is ever pressed. The form still submits, which is the no-JS
+  // path and the one that survives a reload.
+  function enhanceSearch() {
+    var input = document.querySelector("input[data-search-input]");
+    if (!input) {
+      return;
+    }
+    var cards = Array.prototype.slice.call(document.querySelectorAll(".card"));
+    input.addEventListener("input", function () {
+      var needle = input.value.trim().toLowerCase();
+      cards.forEach(function (card) {
+        var name = card.querySelector("h3");
+        var hay = (name ? name.textContent : card.textContent) || "";
+        card.hidden = needle !== "" && hay.toLowerCase().indexOf(needle) === -1;
+      });
+    });
+  }
+
+  // A checkbox that is also a filter submits itself, so turning it on is one
+  // action rather than two.
+  function enhanceAutoSubmit() {
+    document.querySelectorAll("input[data-auto-submit]").forEach(function (box) {
+      box.addEventListener("change", function () {
+        if (box.form) {
+          box.form.submit();
+        }
+      });
+    });
+  }
+
   document.querySelectorAll("form[data-edit]").forEach(enhanceEdit);
   document.querySelectorAll("form[data-fetch]").forEach(enhanceFetch);
+  enhanceSearch();
+  enhanceAutoSubmit();
 })();

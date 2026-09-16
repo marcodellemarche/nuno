@@ -5,6 +5,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -33,6 +35,12 @@ type Options struct {
 	// front of it. Empty means the surface relies on the proxy, which is why
 	// it binds to loopback by default (NFR-14).
 	AdminPassword core.Secret
+
+	// ProxySecret, when set, is a header only the proxy knows. The admin
+	// surface answers only requests that carry it, so a container sharing the
+	// Docker network cannot reach the panel directly and skip the SSO in front
+	// of the public name. Empty means no gate (NFR-14).
+	ProxySecret core.Secret
 
 	// RefreshInterval decides when a reading becomes stale, at twice this
 	// value (ADR-0022).
@@ -65,19 +73,38 @@ func Routes(opts Options) *http.ServeMux {
 	// The per-person page a proxy-authenticated member opens, so a shared
 	// dashboard can show each person their own quota without showing anyone
 	// else's. It trusts the forward-auth header, and only from the proxy.
-	mux.HandleFunc("GET /me", meHandler(opts))
+	gated := func(next http.Handler) http.Handler { return proxy(opts.ProxySecret, next) }
+	mux.Handle("GET /me", gated(meHandler(opts)))
 
 	// Five pages, one per tab, each a real route: the tab bar is navigation,
 	// not a client-side toggle.
 	admin := func(next http.HandlerFunc) http.Handler { return basicAuth(opts.AdminPassword, next) }
-	mux.Handle("GET /{$}", admin(quotasHandler(opts)))
-	mux.Handle("GET /tiers", admin(tiersHandler(opts)))
-	mux.Handle("GET /services", admin(servicesHandler(opts)))
-	mux.Handle("GET /accounts", admin(accountsHandler(opts)))
-	mux.Handle("GET /activity", admin(activityHandler(opts)))
-	mux.Handle("GET /static/", http.StripPrefix("/static/", staticHandler()))
+	mux.Handle("GET /{$}", gated(admin(quotasHandler(opts))))
+	mux.Handle("GET /tiers", gated(admin(tiersHandler(opts))))
+	mux.Handle("GET /services", gated(admin(servicesHandler(opts))))
+	mux.Handle("GET /accounts", gated(admin(accountsHandler(opts))))
+	mux.Handle("GET /activity", gated(admin(activityHandler(opts))))
+	mux.Handle("GET /static/", gated(http.StripPrefix("/static/", staticHandler())))
 	registerActions(mux, opts)
 	return mux
+}
+
+// proxy gates the admin surface and /me on the shared secret Caddy injects.
+// The usage endpoint is deliberately not gated: a dashboard widget reads it
+// server-side, over the Docker network, and authenticates with its own key.
+func proxy(secret core.Secret, next http.Handler) http.Handler {
+	if secret.Empty() {
+		return next
+	}
+	expected := sha256.Sum256([]byte(secret.Reveal()))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		presented := sha256.Sum256([]byte(r.Header.Get("X-Nuno-Proxy-Secret")))
+		if subtle.ConstantTimeCompare(expected[:], presented[:]) != 1 {
+			http.Error(w, "this surface is reachable only through the proxy", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // healthz answers for the process, not for the providers: per-provider health

@@ -16,31 +16,34 @@
         <input type="hidden" name="name" value="{{.Name}}">
         <input type="hidden" name="budget" value="{{.BudgetValue}}">
         <input type="hidden" name="is_default" value="1">
-        {{range .Allocations}}<input type="hidden" name="alloc_{{.ProviderID}}" value="{{.Value}}">{{end}}
+        {{range .Allocations}}<input type="hidden" name="alloc_{{.ProviderID}}" value="{{.Raw}}">{{end}}
         <button class="default-flag" type="submit" title="Everyone with no group-mapped tier gets this one">make default</button>
       </form>
       {{end}}
       <span class="member-count computed" title="The budget percentage allocations resolve against, set with nuno policy. It is an input, not the sum below.">{{if .Budget}}{{.Budget}}{{else}}no budget{{end}}</span>
-      {{if .Overcommit}}<span class="flag" title="Its percentages add up to more than 100, which over-commits deliberately">over-commits</span>{{end}}
+      {{if .Overcommit}}<span class="flag overcommit" title="Its percentages add up to more than 100, which over-commits deliberately">over-commits</span>{{end}}
     </div>
     {{$tier := .}}
     {{range .Allocations}}
     <div class="alloc-row">
       <span>{{.Provider}}</span>
       {{if $.Editable}}
-      <form class="edit-form" method="post" action="/actions/tier" data-edit data-display="{{if .Value}}{{.Value}}{{else}}none{{end}}">
+      <form class="edit-form" method="post" action="/actions/tier" data-edit data-display="{{if .Display}}{{.Display}}{{else}}none{{end}}">
         <input type="hidden" name="return" value="/tiers">
         <input type="hidden" name="name" value="{{$tier.Name}}">
         <input type="hidden" name="budget" value="{{$tier.BudgetValue}}">
         {{if $tier.IsDefault}}<input type="hidden" name="is_default" value="1">{{end}}
         <input type="hidden" name="edited" value="{{.ProviderID}}">
         {{$edited := .ProviderID}}
-        {{range $tier.Allocations}}{{if ne .ProviderID $edited}}<input type="hidden" name="alloc_{{.ProviderID}}" value="{{.Value}}">{{end}}{{end}}
-        <input class="q" type="text" name="alloc_{{.ProviderID}}" value="{{.Value}}" placeholder="none" aria-label="{{$tier.Name}} allocation on {{.Provider}}">
-        <button class="icon-btn ok" type="submit" title="Save this allocation">{{template "icon-check"}}</button>
+        {{range $tier.Allocations}}{{if ne .ProviderID $edited}}<input type="hidden" name="alloc_{{.ProviderID}}" value="{{.Input}}">{{end}}{{end}}
+        <span class="unit-field">
+          <input class="q" type="number" min="0" step="1" inputmode="numeric" name="alloc_{{.ProviderID}}" value="{{.Input}}" placeholder="none" aria-label="{{$tier.Name}} ceiling on {{.Provider}} in GiB">
+          <span class="unit">GiB</span>
+        </span>
+        <button class="icon-btn ok" type="submit" title="Save this ceiling">{{template "icon-check"}}</button>
       </form>
       {{else}}
-      <span>{{if .Value}}{{.Value}}{{else}}none{{end}}</span>
+      <span>{{if .Display}}{{.Display}}{{else}}none{{end}}</span>
       {{end}}
     </div>
     {{end}}
@@ -61,7 +64,7 @@
       {{if and $.Editable $.Unmapped}}
       <details class="reveal">
         <summary><span class="chip-ghost">{{template "icon-plus"}} group</span></summary>
-        <form class="row-form" method="post" action="/actions/group">
+        <form class="row-form" method="post" action="/actions/group" data-fetch data-on-ok="reload">
           <input type="hidden" name="return" value="/tiers">
           <input type="hidden" name="tier" value="{{.Name}}">
           <select name="group" aria-label="directory group">
@@ -82,11 +85,17 @@
       <form class="row-form" method="post" action="/actions/tier">
         <input type="hidden" name="return" value="/tiers">
         <input type="text" name="name" placeholder="standard" size="12" required aria-label="tier name">
-        <input type="text" name="budget" placeholder="budget, 200GiB" size="14" aria-label="budget">
         {{range .Fields}}
-        <input type="text" name="alloc_{{.ID}}" placeholder="{{.Name}}: 25% or 50GiB" size="18" aria-label="{{.Name}} allocation">
+        <span class="unit-field">
+          <input type="number" min="0" step="1" inputmode="numeric" name="alloc_{{.ID}}" placeholder="{{.Name}}" size="8" aria-label="{{.Name}} ceiling in GiB">
+          <span class="unit">GiB</span>
+        </span>
         {{end}}
-        <label class="btn-note"><input type="checkbox" name="is_default" value="1"> default</label>
+        <label class="toggle">
+          <input type="checkbox" name="is_default" value="1">
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          default
+        </label>
         <button type="submit">Create</button>
       </form>
     </details>
@@ -97,10 +106,6 @@
 {{if not .Tiers}}
 <p class="muted">No tiers yet. The ghost card above creates the first one.</p>
 {{end}}
-
-<p class="hint">An empty allocation means the tier says nothing about that service, which is not the
-same as zero: Nuno leaves it alone. <strong>The most generous ceiling wins, per service, so adding
-somebody to a stricter tier does not restrict them.</strong> Demoting means removing the generous group.</p>
 
 {{if .Unmapped}}
 <div class="unassigned">

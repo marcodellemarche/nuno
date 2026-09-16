@@ -63,6 +63,44 @@ func ParseSize(text string) (Quota, error) {
 	return BytesQuota(amount)
 }
 
+// ParseSizeInGiB is ParseSize for a field that shows the unit outside the
+// input: a bare number is read as GiB, so "50" and "50GiB" mean the same
+// thing. Anything with an explicit unit, or "unlimited", is parsed exactly as
+// before, which keeps one escape hatch for the states a number cannot express.
+func ParseSizeInGiB(text string) (Quota, error) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed != "" {
+		if _, err := strconv.ParseFloat(trimmed, 64); err == nil {
+			return ParseSize(trimmed + "GiB")
+		}
+	}
+	return ParseSize(trimmed)
+}
+
+// ParseAllocationInGiB is ParseAllocation for the same kind of field. A bare
+// number is GiB, because the tier editor no longer offers percentages: a
+// ceiling a person reads should not move when somebody else's budget changes.
+func ParseAllocationInGiB(text string) (Allocation, error) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed != "" {
+		if _, err := strconv.ParseFloat(trimmed, 64); err == nil {
+			return ParseAllocation(trimmed + "GiB")
+		}
+	}
+	return ParseAllocation(trimmed)
+}
+
+// FormatGiBNumber renders bytes as a bare number of GiB for an input field
+// whose unit is shown next to it. It is display only: the value is parsed back
+// with ParseSizeInGiB, so the two must round-trip.
+func FormatGiBNumber(n int64) string {
+	v := float64(n) / float64(int64(1)<<30)
+	if v == float64(int64(v)) {
+		return strconv.FormatInt(int64(v), 10)
+	}
+	return strconv.FormatFloat(v, 'f', 2, 64)
+}
+
 // ParseAllocation reads what a tier offers on one provider: "25%", "50GiB", or
 // "unlimited". There is deliberately no spelling for absent: absence is the
 // lack of an allocation, not a value (FR-17).
@@ -103,4 +141,14 @@ func (a Allocation) Describe() string {
 		return FormatIEC(a.Value)
 	}
 	return string(a.Mode)
+}
+
+// DescribeGiB renders an absolute allocation as a bare number of GiB, which is
+// what the editor's input holds when the unit sits outside the field. Any
+// other mode is rendered exactly as Describe would.
+func (a Allocation) DescribeGiB() string {
+	if a.Mode == ModeAbsolute {
+		return FormatGiBNumber(a.Value)
+	}
+	return a.Describe()
 }

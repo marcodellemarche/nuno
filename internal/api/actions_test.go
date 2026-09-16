@@ -250,6 +250,14 @@ func TestTheInlineEditorGetsTheValueAndTheFormGetsARedirect(t *testing.T) {
 	if body["value"] != "150 GiB" {
 		t.Errorf("value = %q, want what the page should now show", body["value"])
 	}
+	// The person's total is the sum of their ceilings, so the card's header
+	// comes back with the response too, or it would stay stale.
+	if body["budget"] == "" || body["used"] == "" {
+		t.Errorf("body = %q, want the recomputed totals as well", rec.Body.String())
+	}
+	if body["row_percent"] == "" {
+		t.Errorf("body = %q, want the edited row's share bar recomputed too", rec.Body.String())
+	}
 	if actor.overrideSet == "" {
 		t.Error("the same handler must still do the work")
 	}
@@ -353,6 +361,12 @@ func TestEditingOneAllocationKeepsTheRestOfTheTier(t *testing.T) {
 	if body["value"] != "25%" {
 		t.Errorf("value = %q, want the allocation that was edited", body["value"])
 	}
+	if body["budget"] != "200 GiB" {
+		t.Errorf("budget = %q, want the tier's budget back so the card header updates", body["budget"])
+	}
+	if body["overcommit"] != "0" {
+		t.Errorf("overcommit = %q, want the derived flag back too", body["overcommit"])
+	}
 }
 
 // The admin surface authenticates with a basic credential, which a browser
@@ -412,17 +426,53 @@ func TestWithNoActorThePageIsReadOnly(t *testing.T) {
 	}
 }
 
-// The page that assigns tiers must say the thing that surprises every admin on
-// day one (FR-19a).
-func TestThePageSaysAStricterTierDoesNotRestrict(t *testing.T) {
-	mux := actionRoutes(t, &fakeActor{}, "")
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/tiers", nil))
+// The precedence rule (a stricter tier does not restrict) lives in the README
+// and docs, not on the page: the UI stays self-explanatory and free of
+// paragraphs. What the page must still do is render every tier it knows.
+func TestTheTiersPageRendersTheTiers(t *testing.T) {
+	s := populated()
+	s.policy = core.Policy{Tiers: map[int64]core.Tier{
+		1: {ID: 1, Name: "standard", IsDefault: true, Budget: core.MustBytes(100 << 30)},
+	}}
+	mux := Routes(Options{Version: "test", Store: s, Actor: &fakeActor{}, Log: discard()})
+	body := pageBody(t, mux, "/tiers")
+	if !strings.Contains(body, "standard") {
+		t.Error("the page must render the tiers it knows")
+	}
+}
 
-	body := rec.Body.String()
-	for _, want := range []string{"most generous ceiling wins", "does not restrict"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("the page does not say %q", want)
+// The editor shows the unit outside the field, so a bare number there is GiB,
+// not bytes. Getting this wrong would write a 50-byte ceiling.
+func TestABareNumberInTheEditorIsGiB(t *testing.T) {
+	actor := &fakeActor{}
+	mux := actionRoutes(t, actor, "")
+
+	post(t, mux, "/actions/override", url.Values{
+		"user": {"alice"}, "provider": {"cloud"}, "quota": {"50"},
+	}, nil)
+	if actor.overrideSet != "alice/cloud/bytes:53687091200" {
+		t.Errorf("override = %q, want 50 GiB", actor.overrideSet)
+	}
+}
+
+// A tier whose ceilings are absolute takes their sum as its budget: with no
+// percentages left, the budget is what the ceilings add up to.
+func TestATierWithAbsoluteAllocationsDerivesItsBudget(t *testing.T) {
+	actor := &fakeActor{}
+	mux := actionRoutes(t, actor, "")
+
+	rec := post(t, mux, "/actions/tier", url.Values{
+		"name": {"standard"}, "alloc_10": {"50"}, "alloc_20": {"150"},
+	}, nil)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("code = %d: %s", rec.Code, rec.Body.String())
+	}
+	if !actor.tier.Budget.Equal(core.MustBytes(200 << 30)) {
+		t.Errorf("budget = %v, want the sum of the ceilings", actor.tier.Budget)
+	}
+	for _, a := range actor.tier.Allocations {
+		if a.Mode != core.ModeAbsolute {
+			t.Errorf("allocation = %+v, want every one absolute", a)
 		}
 	}
 }

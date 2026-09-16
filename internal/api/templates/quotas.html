@@ -5,7 +5,12 @@
   <div class="toolbar">
     <form class="search" method="get" action="/">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
-      <input type="text" name="q" value="{{.Query}}" placeholder="Search people&hellip;" aria-label="Search people">
+      <input type="text" name="q" value="{{.Query}}" placeholder="Search people&hellip;" aria-label="Search people" data-search-input>
+      <label class="toggle" title="Directory accounts with no linked account and no override are hidden by default: they are not customers.">
+        <input type="checkbox" name="all" value="1"{{if .ShowAll}} checked{{end}} data-auto-submit>
+        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        show empty
+      </label>
     </form>
   </div>
 </div>
@@ -39,11 +44,14 @@
               <input type="hidden" name="return" value="/">
               <input type="hidden" name="user" value="{{$person}}">
               <input type="hidden" name="provider" value="{{.Provider}}">
-              <input class="q" type="text" name="quota" value="{{.Edit}}" title="Empty this to clear the override and let the tier decide again" aria-label="ceiling for {{$person}} on {{.Provider}}">
+              <span class="unit-field">
+                <input class="q" type="number" min="0" step="1" inputmode="numeric" name="quota" value="{{.Edit}}" title="Empty this to clear the override and let the tier decide again" aria-label="ceiling for {{$person}} on {{.Provider}} in GiB">
+                <span class="unit">GiB</span>
+              </span>
               <button class="icon-btn ok" type="submit" title="Save this ceiling">{{template "icon-check"}}</button>
             </form>
             {{else}}{{.Ceiling}}{{end}}
-            {{if .Override}}<span class="tier-pill" title="Set for this person only, above their tier">override</span>{{end}}
+            {{if .Override}}<span class="tier-pill override-pill" title="Set for this person only, above their tier">override</span>{{end}}
           </td>
           <td class="bar-cell"><div class="bar" title="{{if .Percent}}{{.Percent}}%{{else}}no ceiling to measure against{{end}}"><div class="fill {{.Fill}}" style="width: {{.Percent}}%"></div></div></td>
           {{if .Linked}}
@@ -64,7 +72,10 @@
                 <select name="provider" aria-label="service">
                   {{range .Elsewhere}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
                 </select>
-                <input type="text" name="quota" placeholder="100GiB or unlimited" size="16" aria-label="ceiling">
+                <span class="unit-field">
+                  <input type="number" min="0" step="1" inputmode="numeric" name="quota" placeholder="100" size="8" aria-label="ceiling in GiB">
+                  <span class="unit">GiB</span>
+                </span>
                 <button type="submit">Set override</button>
                 <span class="btn-note">An override sits above every tier. An empty ceiling clears it.</span>
               </form>
@@ -85,7 +96,10 @@
         <select name="provider" aria-label="service">
           {{range .Elsewhere}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
         </select>
-        <input type="text" name="quota" placeholder="100GiB or unlimited" size="16" aria-label="ceiling">
+        <span class="unit-field">
+          <input type="number" min="0" step="1" inputmode="numeric" name="quota" placeholder="100" size="8" aria-label="ceiling in GiB">
+          <span class="unit">GiB</span>
+        </span>
         <button type="submit">Set override</button>
         <span class="btn-note">An override sits above every tier. An empty ceiling clears it.</span>
       </form>
