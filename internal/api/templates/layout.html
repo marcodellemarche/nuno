@@ -5,6 +5,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Nuno: {{.Tab}}</title>
+<link rel="icon" href="/static/favicon.ico" sizes="any">
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
 <link rel="stylesheet" href="/static/nuno.css">
 <script src="/static/app.js" defer></script>
 </head>
@@ -33,8 +38,7 @@
   {{template "content" .}}
 
   <footer>
-    nuno {{.Version}} &middot; rendered {{.Now.Format "2006-01-02 15:04 UTC"}} &middot;
-    a number is only as fresh as its status says
+    nuno {{.Version}}
   </footer>
 </div>
 </body>

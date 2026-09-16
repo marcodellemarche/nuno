@@ -101,7 +101,9 @@ func TestMeWithoutAUserIsUnauthorized(t *testing.T) {
 	}
 }
 
-func TestMeForAStrangerIsNotFound(t *testing.T) {
+// A person Nuno knows nothing about still gets a page, not a raw 404: the
+// widget renders inside a card and has nowhere else to show an error.
+func TestMeForAStrangerShowsAnEmptyState(t *testing.T) {
 	mux := meRoutes(t, populated(), "10.0.0.0/8")
 
 	req := httptest.NewRequest(http.MethodGet, "/me", nil)
@@ -110,8 +112,11 @@ func TestMeForAStrangerIsNotFound(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("code = %d, want 404 for an unknown user", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 with an empty state", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "No quota yet") {
+		t.Error("an unknown user must get a friendly empty state, not an error")
 	}
 }
 

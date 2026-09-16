@@ -55,7 +55,14 @@ func staticHandler() http.Handler {
 	if err != nil {
 		panic(err)
 	}
-	return http.FileServer(http.FS(sub))
+	files := http.FileServer(http.FS(sub))
+	// The assets are embedded and their URL never changes between builds, so a
+	// cached copy would outlive the binary that served it. Revalidate every
+	// time: it is a small stylesheet and a small script.
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		files.ServeHTTP(w, r)
+	})
 }
 
 // layout is what every page shares: the tab bar, the flash messages and the
@@ -126,7 +133,7 @@ func warningsFor(providers []store.ProviderRow, opts Options) []string {
 			warnings = append(warnings, p.Name+" is degraded and will not be written to: "+p.DegradedReason)
 		}
 	}
-	if opts.AdminPassword.Empty() {
+	if opts.AdminPassword.Empty() && strings.TrimSpace(opts.TrustedProxy) == "" {
 		warnings = append(warnings,
 			"No admin password is set, so this page is only as protected as whatever sits in front of it.")
 	}

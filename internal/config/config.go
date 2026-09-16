@@ -38,6 +38,13 @@ type Config struct {
 	AdminKey      core.Secret // machine, read-only, for /api/v1/usage (FR-46a)
 	AdminPassword core.Secret // a human in the UI when no proxy provides auth
 
+	// ProxySecret is a header Caddy injects on the way to the admin surface.
+	// The admin panel has no password of its own when a proxy authenticates in
+	// front of it, and the panel shares a Docker network with every other
+	// service, so without this any container could reach it directly and skip
+	// the proxy. Empty means no gate (NFR-14).
+	ProxySecret core.Secret
+
 	// TrustedProxy is the network the forward-auth headers may come from, for
 	// the per-person /me page. Empty means no header is trusted (NFR-14).
 	TrustedProxy string
@@ -128,6 +135,7 @@ func Load(env Env) (*Config, error) {
 		RefreshInterval: DefaultRefreshInterval,
 		AdminKey:        core.Secret(env.get("NUNO_ADMIN_KEY", "")),
 		AdminPassword:   core.Secret(env.get("NUNO_ADMIN_PASSWORD", "")),
+		ProxySecret:     core.Secret(env.get("NUNO_PROXY_SECRET", "")),
 		TrustedProxy:    env.get("NUNO_TRUSTED_PROXY", ""),
 	}
 

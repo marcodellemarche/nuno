@@ -35,6 +35,7 @@ func serve(ctx context.Context, a *app) int {
 			Actor:           newActor(a),
 			Log:             a.log,
 			AdminPassword:   a.cfg.AdminPassword,
+			ProxySecret:     a.cfg.ProxySecret,
 			RefreshInterval: a.cfg.RefreshInterval,
 			TrustedProxy:    a.cfg.TrustedProxy,
 		}),

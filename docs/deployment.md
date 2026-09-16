@@ -43,6 +43,7 @@ occ config:app:set files default_quota --value='25 GB'
 | Directory | `NUNO_LDAP_BIND_DN` and `NUNO_LDAP_BIND_PASSWORD` | a read-only bind user, not the directory admin |
 | Usage API | `NUNO_ADMIN_KEY` | read-only, and the only credential a dashboard needs |
 | Admin UI | `NUNO_ADMIN_PASSWORD` | only needed when no proxy authenticates in front |
+| Admin UI behind a proxy | `NUNO_PROXY_SECRET` | a header only the proxy knows, so a container on the shared Docker network cannot reach the panel directly |
 
 The three Nuno-side credentials are never interchangeable: the **admin key** is a machine reading `/api/v1/usage`, the **member token** is one person reading their own usage (and does not exist yet), and the **admin password** is a human in the UI ([ADR-0022](decisions.md#adr-0022-what-the-usage-endpoint-means-before-policy-exists)).
 
@@ -92,6 +93,18 @@ nuno.{$BASE_DOMAIN} {
 ```
 
 With forward auth in front, leave `NUNO_ADMIN_PASSWORD` unset. Without it, set one: "no proxy yet" must never mean "no auth".
+
+### Keep the panel off the shared network
+
+The admin panel has no password of its own when a proxy authenticates in front of it, and it shares a Docker network with every other service. Without a gate, any container on that network can reach `nuno:8080` directly and skip the proxy entirely. `NUNO_PROXY_SECRET` closes that: the proxy injects `X-Nuno-Proxy-Secret`, and the panel refuses every request that does not carry it. `/healthz` and the key-authenticated `/api/v1/usage` stay reachable, because a dashboard widget reads usage server-side and never sees the proxy.
+
+```caddyfile
+reverse_proxy nuno:8080 {
+	header_up X-Nuno-Proxy-Secret {$NUNO_PROXY_SECRET}
+}
+```
+
+Set the same value on both sides with `openssl rand -hex 32`. Leave it unset only when Nuno is not behind a proxy, in which case set `NUNO_ADMIN_PASSWORD` instead.
 
 ## The dashboard widget
 

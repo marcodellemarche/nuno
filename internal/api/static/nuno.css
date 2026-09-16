@@ -72,6 +72,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .search { display: flex; align-items: center; gap: .4rem; border: 1px solid var(--line); border-radius: 6px; padding: .4rem .7rem; color: var(--muted); font-size: .85rem; background: var(--card); }
 .search input { font: inherit; font-size: .85rem; border: none; background: none; color: var(--fg); padding: 0; width: 10rem; }
 .search input:focus { outline: none; }
+.search .toggle { border-left: 1px solid var(--line); padding-left: .6rem; margin-left: .1rem; }
 
 .btn, button {
   font: inherit;
@@ -98,7 +99,63 @@ input[type="text"] {
   background: var(--bg);
   color: var(--fg);
 }
-select { font: inherit; font-size: .85rem; padding: .25rem; background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 5px; }
+
+/* A number field with the unit outside it: the input stays numeric, the unit
+   is a suffix that cannot be edited or deleted. */
+input[type="number"] {
+  font: inherit;
+  font-size: .85rem;
+  padding: .25rem .4rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.unit-field { display: inline-flex; align-items: stretch; }
+.unit-field input,
+.edit-form .unit-field input.q,
+.row-form .unit-field input {
+  border-radius: 4px 0 0 4px;
+}
+.unit-field .unit {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 .45rem;
+  border: 1px solid var(--line);
+  border-left: none;
+  border-radius: 0 4px 4px 0;
+  background: var(--track);
+  color: var(--muted);
+  font-size: .78rem;
+}
+
+/* A select is a control, not a system widget: the native chrome is replaced
+   with the same border and radius as everything else, plus a chevron. */
+select {
+  font: inherit;
+  font-size: .85rem;
+  padding: .3rem 1.9rem .3rem .55rem;
+  background-color: var(--card);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right .55rem center;
+  background-size: .7rem;
+  cursor: pointer;
+}
+select:hover { border-color: var(--muted); }
+select:focus-visible { outline: 2px solid var(--fg); outline-offset: 1px; }
 
 table { width: 100%; border-collapse: collapse; }
 th {
@@ -152,7 +209,15 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 .total-fill.fill-bad { background: var(--bad); }
 
 .svc-type { color: var(--muted); font-size: .85em; }
-.bar-cell { width: 22%; min-width: 6rem; }
+/* Every person is its own table, so the columns have to be given their widths:
+   with automatic layout each card sizes to its own content and the headers
+   land at different offsets, which reads as a broken grid. */
+.card table { table-layout: fixed; }
+.card table th:nth-child(1) { width: 20%; }
+.card table th:nth-child(2) { width: 12%; }
+.card table th:nth-child(3) { width: 26%; }
+.card table th:nth-child(4) { width: 27%; }
+.card table th:nth-child(5) { width: 15%; }
 .bar { height: .45rem; border-radius: 999px; background: var(--track); overflow: hidden; }
 .fill { height: 100%; }
 .fill-ok { background: var(--ok); }
@@ -179,7 +244,6 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 .ghost-row td { color: var(--muted); font-size: .85rem; padding-top: .6rem; border-bottom: none; }
 
 /* Tiers: one card per tier, its groups as chips. */
-.page-tiers .sub { max-width: 46rem; }
 .tiers-row { display: flex; gap: .9rem; align-items: stretch; flex-wrap: wrap; }
 .tier-card { flex: 1; min-width: 15rem; border: 1px solid var(--line); border-radius: 8px; background: var(--card); padding: 1.1rem 1.25rem; display: flex; flex-direction: column; }
 .tier-card-head { display: flex; align-items: center; gap: .5rem; margin-bottom: .8rem; }
@@ -229,7 +293,6 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 .svc-meta dt { color: var(--muted); }
 .svc-meta dd { margin: 0; font-variant-numeric: tabular-nums; }
 .degraded { margin-top: .7rem; padding: .5rem .7rem; border-radius: 5px; background: var(--track); color: var(--warn); font-size: .82rem; }
-.svc-note { color: var(--muted); font-size: .82rem; margin: .9rem .2rem 0; }
 
 /* Accounts: one table, resolved first, then the ones needing a decision. */
 .page-accounts table { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
@@ -255,7 +318,6 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
 .legend-item { display: inline-flex; align-items: baseline; gap: .4rem; font-size: .8rem; }
 .legend-item .kind { flex: none; }
 .legend-item span.txt { color: var(--muted); }
-.hint { color: var(--muted); font-size: .82rem; margin: .8rem .2rem 0; }
 .row-form { display: inline-flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
 
 /* Activity: the run actions and the history. */
@@ -301,7 +363,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
   font: inherit;
   font-size: .9rem;
   padding: .2rem .4rem;
-  width: 7rem;
+  width: 5.5rem;
   border: 1px solid var(--fg);
   border-radius: 5px;
   background: var(--bg);

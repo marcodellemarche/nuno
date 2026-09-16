@@ -16,8 +16,9 @@ import (
 
 type quotasData struct {
 	layout
-	Query  string
-	People []personView
+	Query   string
+	ShowAll bool
+	People  []personView
 }
 
 type personView struct {
@@ -29,6 +30,11 @@ type personView struct {
 	Fill      string
 	Partial   bool
 	Rows      []ceilingRow
+
+	// Empty is true when this person has no linked account and no override,
+	// which is what a directory service account looks like. The page hides
+	// those by default: they are not customers (FR-57).
+	Empty bool
 
 	// Elsewhere are the services this person has no row for, which is what the
 	// ghost row at the bottom of the card offers.
@@ -56,8 +62,9 @@ func quotasHandler(opts Options) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		data := quotasData{
-			layout: newLayout(opts, r, "Quotas"),
-			Query:  strings.TrimSpace(r.URL.Query().Get("q")),
+			layout:  newLayout(opts, r, "Quotas"),
+			Query:   strings.TrimSpace(r.URL.Query().Get("q")),
+			ShowAll: r.URL.Query().Get("all") == "1",
 		}
 		providers := providerRows(ctx, opts, &data.layout)
 
@@ -86,7 +93,14 @@ func quotasHandler(opts Options) http.HandlerFunc {
 			if data.Query != "" && !strings.Contains(strings.ToLower(entry.User), strings.ToLower(data.Query)) {
 				continue
 			}
-			data.People = append(data.People, personFor(ctx, opts, entry, byUID[entry.User], providers, policy))
+			view := personFor(ctx, opts, entry, byUID[entry.User], providers, policy)
+			// A person with nothing to manage is hidden unless the admin asks
+			// for them, or is searching by name. The service accounts in the
+			// directory are exactly this shape and made the page noisy.
+			if view.Empty && !data.ShowAll && data.Query == "" {
+				continue
+			}
+			data.People = append(data.People, view)
 		}
 		render(w, opts, quotasTemplate, data)
 	}
@@ -108,12 +122,7 @@ func personFor(ctx context.Context, opts Options, entry core.UsageUser, user cor
 	if entry.BudgetBytes != nil {
 		view.Budget = core.FormatIEC(*entry.BudgetBytes)
 	}
-	switch {
-	case view.Percent >= 90:
-		view.Fill = "fill-bad"
-	case view.Percent >= 70:
-		view.Fill = "fill-warn"
-	}
+	view.Fill = totalFill(view.Percent)
 
 	up, _, err := opts.Store.UserPolicy(ctx, user.ID)
 	if err != nil {
@@ -144,7 +153,9 @@ func personFor(ctx context.Context, opts Options, entry core.UsageUser, user cor
 			Used:     "—",
 			Ceiling:  "—",
 			Linked:   linked,
-			Override: hasOverride,
+			// An override equal to what the tier already gives changes nothing,
+			// so the tag would only be noise. See overrideRedundant.
+			Override: hasOverride && !overrideRedundant(user, provider.ID, policy, up),
 			Status:   usageRow.Status,
 		}
 		if linked {
@@ -154,19 +165,64 @@ func personFor(ctx context.Context, opts Options, entry core.UsageUser, user cor
 			row.Ceiling = quotaText(usageRow.QuotaBytes, usageRow.Status)
 			row.Percent = barWidth(usageRow.UsedPercent)
 			row.Fill = fillFor(row.Percent, usageRow.Status)
-			if usageRow.Status == core.StatusOK || usageRow.Status == core.StatusStale {
-				row.Edit = row.Ceiling
+			if usageRow.QuotaBytes != nil && (usageRow.Status == core.StatusOK || usageRow.Status == core.StatusStale) {
+				// The input holds a bare number of GiB; the unit is a suffix.
+				row.Edit = core.FormatGiBNumber(*usageRow.QuotaBytes)
 			}
 		}
 		if hasOverride {
 			// An override is what an admin set, so it is what the field edits,
 			// even on a service this person has no account on yet.
 			row.Ceiling = override.String()
-			row.Edit = override.String()
+			row.Edit = editGiB(override)
 		}
 		view.Rows = append(view.Rows, row)
 	}
+	view.Empty = len(view.Rows) == 0
 	return view
+}
+
+// editGiB is what an editable field starts with: a bare number of GiB, so the
+// unit can sit outside the input. A state a number cannot express (unlimited,
+// unknown) is shown as it is, because hiding it would be worse.
+func editGiB(q core.Quota) string {
+	if q.IsBytes() {
+		return core.FormatGiBNumber(q.Bytes)
+	}
+	return q.String()
+}
+
+// overrideRedundant reports whether an override is the same as what the tier
+// chain already resolves to for that provider. Such an override is stored but
+// changes nothing, and tagging it "override" makes an admin think a decision
+// is in play when it is not.
+func overrideRedundant(user core.User, providerID int64, policy core.Policy, up core.UserPolicy) bool {
+	override, ok := up.ProviderOverrides[providerID]
+	if !ok {
+		return false
+	}
+	without := up
+	without.ProviderOverrides = make(map[int64]core.Quota, len(up.ProviderOverrides))
+	for id, quota := range up.ProviderOverrides {
+		if id != providerID {
+			without.ProviderOverrides[id] = quota
+		}
+	}
+	resolved := core.Resolve(user, providerID, policy, without)
+	return resolved.Present && resolved.Ceiling.Equal(override)
+}
+
+// totalFill is the colour of the whole-person bar. It is about how full the
+// budget is, not about any one provider's status, so it is its own function:
+// the override action has to answer with the same colour the page renders.
+func totalFill(percent int) string {
+	switch {
+	case percent >= 90:
+		return "fill-bad"
+	case percent >= 70:
+		return "fill-warn"
+	}
+	return ""
 }
 
 type tiersData struct {
@@ -190,9 +246,19 @@ type tierView struct {
 type allocationView struct {
 	ProviderID int64
 	Provider   string
-	// Value is empty when the tier is silent about this service, which is not
-	// the same as zero (FR-17).
-	Value string
+	// Input is what the field starts with: a bare number of GiB when the tier
+	// allocates an absolute amount, empty when the tier is silent about this
+	// service (FR-17).
+	Input string
+	// Display is the human form shown when the field is not being edited. A
+	// percentage is resolved against the budget here, so the page never shows
+	// a percentage: a ceiling a person reads should not move when somebody
+	// else's budget changes.
+	Display string
+	// Raw is the allocation as stored, which is what a form that is not
+	// editing a ceiling carries, so "make default" does not silently rewrite a
+	// percentage into an absolute amount.
+	Raw string
 }
 
 type groupChip struct {
@@ -266,9 +332,17 @@ func tiersHandler(opts Options) http.HandlerFunc {
 			for _, field := range data.Fields {
 				allocation := allocationView{ProviderID: field.ID, Provider: field.Name}
 				for _, a := range tier.Allocations {
-					if a.ProviderID == field.ID {
-						allocation.Value = a.Describe()
+					if a.ProviderID != field.ID {
+						continue
 					}
+					if resolved, ok := tier.AllocationFor(field.ID); ok && resolved.IsBytes() {
+						allocation.Input = core.FormatGiBNumber(resolved.Bytes)
+						allocation.Display = core.FormatIEC(resolved.Bytes)
+					} else {
+						allocation.Input = a.DescribeGiB()
+						allocation.Display = a.Describe()
+					}
+					allocation.Raw = a.Describe()
 				}
 				view.Allocations = append(view.Allocations, allocation)
 			}

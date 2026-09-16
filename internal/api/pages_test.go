@@ -106,6 +106,16 @@ func TestTheTierPageShowsTheBudgetWithoutOfferingItForEditing(t *testing.T) {
 	if !strings.Contains(body, `type="hidden" name="budget" value="200 GiB"`) {
 		t.Error("an allocation edit must carry the budget, or saving one would drop it")
 	}
+	// A percentage is resolved against the budget and shown as GiB, and the
+	// input holds the bare number with the unit outside it.
+	if !strings.Contains(body, `value="100"`) || !strings.Contains(body, `<span class="unit">GiB</span>`) {
+		t.Error("a percent allocation must be shown as GiB, with the unit outside the input")
+	}
+	// A template error truncates the page after the point that failed, so the
+	// closing tag is what proves the whole thing rendered.
+	if !strings.Contains(body, "</html>") {
+		t.Error("the tiers page did not render to the end")
+	}
 }
 
 // The chips are the only place a group is mapped to a tier, so both directions
@@ -185,12 +195,13 @@ func TestTheGuardedToggleIsACheckbox(t *testing.T) {
 }
 
 // A person with no account anywhere still gets somewhere to set a ceiling, so
-// a quota can be waiting before they first log in (ADR-0024).
+// a quota can be waiting before they first log in (ADR-0024). They are hidden
+// by default as service accounts, so the test asks for the full list.
 func TestSomebodyWithNoAccountsStillGetsSomewhereToSetACeiling(t *testing.T) {
 	s := populated()
 	s.accounts = nil
 	mux := Routes(Options{Version: "test", Store: s, Actor: &fakeActor{}, Log: discard()})
-	body := pageBody(t, mux, "/")
+	body := pageBody(t, mux, "/?all=1")
 
 	if !strings.Contains(body, "No linked account on any provider.") {
 		t.Error("the card must say there is no account")
@@ -221,5 +232,86 @@ func TestTheScriptIsServedFromTheBinary(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "nuno-inline-edit") {
 		t.Error("that is not the inline editor")
+	}
+}
+
+// Directory service accounts have no linked account and no override, so they
+// are hidden from Quotas by default. The toggle is what brings them back.
+func TestServiceAccountsAreHiddenUnlessAsked(t *testing.T) {
+	s := populated()
+	s.accounts = nil
+	mux := Routes(Options{Version: "test", Store: s, Actor: &fakeActor{}, Log: discard()})
+
+	if body := pageBody(t, mux, "/"); strings.Contains(body, "<h3>alice</h3>") {
+		t.Error("a person with nothing to manage must not show by default")
+	}
+	if body := pageBody(t, mux, "/?all=1"); !strings.Contains(body, "<h3>alice</h3>") {
+		t.Error("the toggle must bring the hidden accounts back")
+	}
+}
+
+// Behind a forward-auth proxy the admin password warning is noise: the
+// operator has already declared the proxy with NUNO_TRUSTED_PROXY.
+func TestTrustedProxySilencesTheAdminPasswordWarning(t *testing.T) {
+	mux := Routes(Options{
+		Version: "test", Store: populated(), Log: discard(),
+		TrustedProxy: "172.18.0.0/16",
+	})
+	if body := pageBody(t, mux, "/"); strings.Contains(body, "No admin password is set") {
+		t.Error("a declared proxy must silence the warning")
+	}
+
+	bare := Routes(Options{Version: "test", Store: populated(), Log: discard()})
+	if body := pageBody(t, bare, "/"); !strings.Contains(body, "No admin password is set") {
+		t.Error("without a password or a proxy the warning must stay")
+	}
+}
+
+// An override that stores the same ceiling the tier already resolves to
+// changes nothing, so the row must not be tagged "override": the tag would
+// suggest a decision is in play when it is not.
+func TestAnOverrideEqualToTheTierIsNotTagged(t *testing.T) {
+	tierID := int64(1)
+	policy := core.Policy{
+		Tiers: map[int64]core.Tier{1: {
+			ID: 1, Name: "standard", Budget: core.MustBytes(100 << 30),
+			Allocations: []core.Allocation{{ProviderID: 10, Mode: core.ModeAbsolute, Value: 50 << 30}},
+		}},
+		DefaultTierID: &tierID,
+	}
+	user := core.User{ID: 1, UID: "alice", Status: core.UserActive}
+
+	up := core.UserPolicy{ProviderOverrides: map[int64]core.Quota{10: core.MustBytes(50 << 30)}}
+	if !overrideRedundant(user, 10, policy, up) {
+		t.Error("an override equal to the tier must be seen as redundant")
+	}
+	up.ProviderOverrides[10] = core.MustBytes(60 << 30)
+	if overrideRedundant(user, 10, policy, up) {
+		t.Error("an override that changes the ceiling must not be redundant")
+	}
+}
+
+func TestARedundantOverrideIsNotTaggedInThePage(t *testing.T) {
+	tierID := int64(1)
+	s := populated()
+	s.policy = core.Policy{
+		Tiers: map[int64]core.Tier{1: {
+			ID: 1, Name: "standard", Budget: core.MustBytes(100 << 30),
+			Allocations: []core.Allocation{{ProviderID: 10, Mode: core.ModeAbsolute, Value: 50 << 30}},
+		}},
+		DefaultTierID: &tierID,
+	}
+	s.userPolicies = map[int64]core.UserPolicy{
+		1: {ProviderOverrides: map[int64]core.Quota{10: core.MustBytes(50 << 30)}},
+	}
+	mux := Routes(Options{Version: "test", Store: s, Actor: &fakeActor{}, Log: discard()})
+	if body := pageBody(t, mux, "/"); strings.Contains(body, "override-pill") {
+		t.Error("a redundant override must not be tagged")
+	}
+
+	s.userPolicies[1] = core.UserPolicy{ProviderOverrides: map[int64]core.Quota{10: core.MustBytes(60 << 30)}}
+	mux = Routes(Options{Version: "test", Store: s, Actor: &fakeActor{}, Log: discard()})
+	if body := pageBody(t, mux, "/"); !strings.Contains(body, "override-pill") {
+		t.Error("an override that changes the ceiling must be tagged")
 	}
 }

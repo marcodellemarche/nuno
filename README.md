@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="brand/wordmark.svg" alt="nuno" width="320">
+</p>
+
 # Nuno
 
 > Status: **v0.1.0** (2026-09-15). Identity sync, linking, the usage page and endpoint, tiers and allocations, the planner and the applier with its guardrails all run, and the CLI covers the day-two work. The image is published at `ghcr.io/marcodellemarche/nuno`. Not yet: the HTTP client mode that would let a command run against a live server, and a per-person endpoint. The design is frozen and every decision is recorded.
@@ -50,6 +54,19 @@ It connects to an identity provider (LLDAP or any LDAP directory), reads and wri
 | Observed state | What the provider reports right now (quota and usage). |
 | Account link | The mapping between a person and their account on a provider. Nuno never writes to an account it has not linked. |
 | Reconcile | Compute desired vs observed and apply the difference. |
+
+Two rules surprise every admin on day one, so they are written down here
+rather than on the page:
+
+- **Absent is not zero.** A tier with no allocation for a service says nothing
+  about it: Nuno emits no change and the provider keeps what it has.
+- **The most generous ceiling wins, per service.** Resolution takes the highest
+  resolved ceiling across the tiers somebody is entitled to, so adding them to
+  a stricter tier does not restrict them. Demoting means removing the generous
+  group.
+
+The admin UI edits ceilings in GiB, with the unit outside the field. The API
+and the CLI also accept a percentage of the tier's budget, and `unlimited`.
 
 ## Features
 

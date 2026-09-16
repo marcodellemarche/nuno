@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="Nuno">
+  <style>
+    .nuno-fg { color: #1c1c1a; }
+    @media (prefers-color-scheme: dark) { .nuno-fg { color: #e6e6e3; } }
+  </style>
+    <g fill="none" stroke-width="25" stroke-linecap="round">
+      <path class="nuno-fg" d="M73.60 18.15A44 44 0 1 1 46.40 18.15" stroke="currentColor"/>
+      <path d="M73.60 18.15A44 44 0 0 1 95.60 34.14" stroke="currentColor"/>
+    </g>
+</svg>

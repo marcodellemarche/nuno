@@ -287,7 +287,7 @@ func TestEveryPageRenders(t *testing.T) {
 		want []string
 	}{
 		{"quotas", "/", []string{"alice", "cloud", "50 GiB", "1 GiB"}},
-		{"tiers", "/tiers", []string{"Tiers", "most generous ceiling wins"}},
+		{"tiers", "/tiers", []string{"Tiers"}},
 		{"services", "/services", []string{"Cloud", "34.0.4", "unproven", "Keys for the usage API"}},
 		{"accounts", "/accounts", []string{"nc-alice", "alice", "Needs a decision"}},
 		{"activity", "/activity", []string{"Recent runs", "Recent changes"}},

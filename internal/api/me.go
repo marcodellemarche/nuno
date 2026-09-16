@@ -51,10 +51,6 @@ func meHandler(opts Options) http.HandlerFunc {
 				break
 			}
 		}
-		if found == nil {
-			http.Error(w, "no quota for "+uid, http.StatusNotFound)
-			return
-		}
 
 		// The page is a separate document, so it cannot inherit the dashboard's
 		// text color: an iframe has no idea it is sitting on a dark card. The
@@ -67,7 +63,14 @@ func meHandler(opts Options) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		if err := meTemplate.ExecuteTemplate(w, "me.html", mePage{User: *found, Theme: theme}); err != nil {
+		// A person with no linked account is not an error: the widget still
+		// has to render something, and a raw 404 is what it would show
+		// instead. The empty state is a page, not a failure.
+		page := mePage{Theme: theme, Missing: found == nil}
+		if found != nil {
+			page.User = *found
+		}
+		if err := meTemplate.ExecuteTemplate(w, "me.html", page); err != nil {
 			opts.Log.Error("me: render", "error", err)
 		}
 	}
@@ -76,8 +79,9 @@ func meHandler(opts Options) http.HandlerFunc {
 // mePage is what the template renders: the person's usage, and the theme the
 // widget told us it is embedded in.
 type mePage struct {
-	User  core.UsageUser
-	Theme string
+	User    core.UsageUser
+	Theme   string
+	Missing bool
 }
 
 // fromTrustedProxy reports whether the request arrived from the configured
