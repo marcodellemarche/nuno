@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -24,6 +25,8 @@ type fakeActor struct {
 	cleared     bool
 	linked      string
 	unlinked    bool
+	mapped      string
+	unmapped    bool
 	issued      string
 	revoked     int64
 	err         error
@@ -47,6 +50,11 @@ func (f *fakeActor) SetOverride(_ context.Context, uid, provider string, quota c
 func (f *fakeActor) Link(_ context.Context, uid, provider, externalID string, unlink bool) error {
 	f.linked = uid + "/" + provider + "/" + externalID
 	f.unlinked = unlink
+	return f.err
+}
+func (f *fakeActor) MapGroup(_ context.Context, groupUUID, tier string, unmap bool) error {
+	f.mapped = groupUUID + "/" + tier
+	f.unmapped = unmap
 	return f.err
 }
 func (f *fakeActor) IssueKey(_ context.Context, label string) (core.Secret, error) {
@@ -222,6 +230,131 @@ func TestAnIssuedKeyIsShownOnceAndNotInAURL(t *testing.T) {
 	}
 }
 
+// The inline editor and the plain form are the same route. One gets the value
+// to swap in, the other a redirect to follow (ADR-0030).
+func TestTheInlineEditorGetsTheValueAndTheFormGetsARedirect(t *testing.T) {
+	inline := map[string]string{"X-Requested-With": "nuno-inline-edit"}
+
+	actor := &fakeActor{}
+	mux := actionRoutes(t, actor, "")
+	rec := post(t, mux, "/actions/override", url.Values{
+		"user": {"alice"}, "provider": {"cloud"}, "quota": {"150GiB"},
+	}, inline)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want the value back: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body %q: %v", rec.Body.String(), err)
+	}
+	if body["value"] != "150 GiB" {
+		t.Errorf("value = %q, want what the page should now show", body["value"])
+	}
+	if actor.overrideSet == "" {
+		t.Error("the same handler must still do the work")
+	}
+
+	// A bad value comes back as an error the row can show, not as a redirect
+	// the fetch would silently follow.
+	rec = post(t, mux, "/actions/override", url.Values{
+		"user": {"alice"}, "provider": {"cloud"}, "quota": {"heaps"},
+	}, inline)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d, want 400", rec.Code)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body["err"] == "" {
+		t.Errorf("body = %q, want a message to show inline", rec.Body.String())
+	}
+
+	// With no such header nothing changes: the browser is sent back to the
+	// page, which is what makes the form work with no JavaScript.
+	rec = post(t, mux, "/actions/override", url.Values{
+		"user": {"alice"}, "provider": {"cloud"}, "quota": {"150GiB"},
+	}, nil)
+	if rec.Code != http.StatusSeeOther {
+		t.Errorf("code = %d, want a redirect", rec.Code)
+	}
+}
+
+// One action route serves five pages, so a form says where it came from.
+func TestAFormComesBackToThePageItWasSubmittedFrom(t *testing.T) {
+	cases := []struct {
+		name string
+		back string
+		want string
+	}{
+		{"the page that submitted it", "/tiers", "/tiers?ok="},
+		{"nothing at all", "", "/?ok="},
+		{"another site", "//evil.example.org", "/?ok="},
+		{"a path with a query of its own", "/tiers?q=x", "/tiers?ok="},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			mux := actionRoutes(t, &fakeActor{}, "")
+			rec := post(t, mux, "/actions/observe", url.Values{"return": {c.back}}, nil)
+			if location := rec.Header().Get("Location"); !strings.HasPrefix(location, c.want) {
+				t.Errorf("location = %q, want it to start with %q", location, c.want)
+			}
+		})
+	}
+}
+
+func TestGroupChipsMapAndUnmap(t *testing.T) {
+	actor := &fakeActor{}
+	mux := actionRoutes(t, actor, "")
+
+	if rec := post(t, mux, "/actions/group", url.Values{
+		"group": {"g-staff"}, "tier": {"pro"},
+	}, nil); rec.Code != http.StatusSeeOther || actor.mapped != "g-staff/pro" {
+		t.Errorf("map: code = %d, mapped = %q", rec.Code, actor.mapped)
+	}
+	if actor.unmapped {
+		t.Error("adding a chip must not unmap")
+	}
+
+	if rec := post(t, mux, "/actions/group", url.Values{
+		"group": {"g-staff"}, "unmap": {"1"},
+	}, nil); rec.Code != http.StatusSeeOther || !actor.unmapped {
+		t.Errorf("unmap: code = %d, unmapped = %v", rec.Code, actor.unmapped)
+	}
+
+	// A chip with no group is a bug in the page, not something to act on.
+	actor2 := &fakeActor{}
+	mux2 := actionRoutes(t, actor2, "")
+	rec := post(t, mux2, "/actions/group", url.Values{"tier": {"pro"}}, nil)
+	if !strings.Contains(rec.Header().Get("Location"), "err=") || actor2.mapped != "" {
+		t.Error("a group has to be named")
+	}
+}
+
+// Saving one allocation must not drop the budget the tier resolves percentages
+// against, which is why the row carries it (ADR-0020).
+func TestEditingOneAllocationKeepsTheRestOfTheTier(t *testing.T) {
+	actor := &fakeActor{}
+	mux := actionRoutes(t, actor, "")
+
+	rec := post(t, mux, "/actions/tier", url.Values{
+		"name": {"standard"}, "budget": {"200 GiB"}, "is_default": {"1"},
+		"alloc_10": {"25%"}, "alloc_20": {"50 GiB"}, "edited": {"10"},
+	}, map[string]string{"X-Requested-With": "nuno-inline-edit"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d: %s", rec.Code, rec.Body.String())
+	}
+	if !actor.tier.Budget.Equal(core.MustBytes(200<<30)) || !actor.tier.IsDefault {
+		t.Errorf("tier = %+v, want the budget and the default flag kept", actor.tier)
+	}
+	if len(actor.tier.Allocations) != 2 {
+		t.Errorf("allocations = %+v, want the untouched one carried along", actor.tier.Allocations)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["value"] != "25%" {
+		t.Errorf("value = %q, want the allocation that was edited", body["value"])
+	}
+}
+
 // The admin surface authenticates with a basic credential, which a browser
 // will replay for a form another site submits.
 func TestCrossSiteMutationsAreRefused(t *testing.T) {
@@ -279,11 +412,12 @@ func TestWithNoActorThePageIsReadOnly(t *testing.T) {
 	}
 }
 
-// The page must say the thing that surprises every admin on day one (FR-19a).
+// The page that assigns tiers must say the thing that surprises every admin on
+// day one (FR-19a).
 func TestThePageSaysAStricterTierDoesNotRestrict(t *testing.T) {
 	mux := actionRoutes(t, &fakeActor{}, "")
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/tiers", nil))
 
 	body := rec.Body.String()
 	for _, want := range []string{"most generous ceiling wins", "does not restrict"} {

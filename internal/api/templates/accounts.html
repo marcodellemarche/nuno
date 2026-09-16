@@ -1,0 +1,84 @@
+{{/* SPDX-License-Identifier: AGPL-3.0-or-later */}}
+{{define "content"}}
+<h1>Accounts</h1>
+<p class="sub">Every external account Nuno has seen, one per row. Most already belong to someone; the few at the bottom need a decision before they can get a quota.</p>
+
+{{if or .Resolved .Pending}}
+<table>
+  <thead><tr><th style="width: 22%">External account</th><th style="width: 14%">Service</th><th style="width: 26%">Person</th><th style="width: 14%">Reason</th><th style="width: 24%"></th></tr></thead>
+  <tbody>
+    {{range .Resolved}}
+    <tr>
+      <td><code>{{.Account}}</code></td>
+      <td>{{.Provider}}</td>
+      <td>{{.Person}}</td>
+      <td class="muted">&mdash;</td>
+      {{if and $.Editable .Manual}}
+      <td>
+        <form method="post" action="/actions/link">
+          <input type="hidden" name="return" value="/accounts">
+          <input type="hidden" name="user" value="{{.Person}}">
+          <input type="hidden" name="provider" value="{{.Provider}}">
+          <input type="hidden" name="unlink" value="1">
+          <button class="unlink-btn" type="submit" title="Linked by hand. Unlinking lets matching decide again.">Unlink</button>
+        </form>
+      </td>
+      {{else}}
+      <td class="muted">&mdash;</td>
+      {{end}}
+    </tr>
+    {{end}}
+
+    {{if .Pending}}
+    <tr class="divider">
+      <td colspan="5">
+        <div class="divider-row">
+          <span class="divider-label">Needs a decision</span>
+          <span class="legend-item"><span class="kind kind-unlinked">unlinked</span><span class="txt">no match &mdash; pick a person</span></span>
+          <span class="legend-item"><span class="kind kind-ambiguous">ambiguous</span><span class="txt">matches more than one &mdash; confirm</span></span>
+          <span class="legend-item"><span class="kind kind-unmanaged">unmanaged</span><span class="txt">not a person &mdash; nothing to do</span></span>
+        </div>
+      </td>
+    </tr>
+    {{end}}
+
+    {{range $row := .Pending}}
+    <tr>
+      <td>
+        {{if eq .Pick "account"}}
+        <select name="external_id" form="link-{{.ID}}" aria-label="account on {{.Provider}}">
+          {{range .Accounts}}<option value="{{.}}">{{.}}</option>{{end}}
+        </select>
+        {{else if .Account}}<code>{{.Account}}</code>{{else}}<span class="muted">&mdash;</span>{{end}}
+      </td>
+      <td>{{.Provider}}</td>
+      <td>
+        {{if eq .Pick "person"}}
+        <select name="user" form="link-{{.ID}}" aria-label="person for {{.Account}}">
+          {{if not .Person}}<option value="">choose a person&hellip;</option>{{end}}
+          {{range $.Users}}<option value="{{.UID}}"{{if eq .UID $row.Person}} selected{{end}}>{{.UID}}</option>{{end}}
+        </select>
+        {{else if .Person}}{{.Person}}{{else}}<span class="muted">not a person</span>{{end}}
+      </td>
+      <td><span class="kind kind-{{.Kind}}" title="{{.Detail}}">{{.Kind}}</span></td>
+      <td>
+        {{if and $.Editable .Pick}}
+        <form class="row-form" id="link-{{.ID}}" method="post" action="/actions/link">
+          <input type="hidden" name="return" value="/accounts">
+          {{if eq .Pick "person"}}<input type="hidden" name="provider" value="{{.Provider}}"><input type="hidden" name="external_id" value="{{.Account}}">{{end}}
+          {{if eq .Pick "account"}}<input type="hidden" name="provider" value="{{.Provider}}"><input type="hidden" name="user" value="{{.Person}}">{{end}}
+          <button class="btn btn-primary" type="submit">{{if .Confirm}}Confirm{{else}}Link{{end}}</button>
+        </form>
+        {{else}}
+        <span class="muted">{{if .Detail}}{{.Detail}}{{else}}&mdash;{{end}}</span>
+        {{end}}
+      </td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+<p class="hint">A manual link always overrides an automatic match, and stays until someone unlinks it above. Nuno never guesses which account belongs to whom, and never writes to one it has not linked.</p>
+{{else}}
+<p class="muted">No accounts have been observed yet. Run <code>nuno observe</code>, or read every service from Activity.</p>
+{{end}}
+{{end}}

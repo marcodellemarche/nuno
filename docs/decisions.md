@@ -640,3 +640,27 @@ A `customapi` widget is fetched by the Homepage server with one key, so it canno
 - The page is a widget body: no navigation, no admin actions, so an iframe cannot become a way into the admin surface.
 - The proxy must allow the page to be framed, and it must not leave a client-supplied `Remote-User` in place. Authelia overwrites it via forward auth `copy_headers`, and the homelab's Caddy block removes `X-Frame-Options` and sets `frame-ancestors` for the dashboard origin.
 - `?detail=service` and `?detail=provider` remain for a `customapi` widget, which is still the right tool when the audience is everyone or only admins.
+
+## ADR-0030: A small amount of JavaScript, for editing a value in place
+
+**Status: Accepted (2026-09-16).** Revises [ADR-0006](#adr-0006-ui-approach), which assumed HTMX or nothing.
+
+**Context.** The admin surface became five pages, and the ceilings, the tier allocations and the group-to-tier chips are now edited where they are shown rather than in a form below the table. A plain form post answers that with a full navigation: the page reloads, the scroll position moves, and the only confirmation is a flash message at the top, far from the value that changed. With a dozen people on the Quotas page, that is the difference between changing three ceilings and changing one and giving up.
+
+ADR-0006 said HTMX, vendored and embedded. HTMX is 47 kB of dependency for what is, in the end, one submit handler and a swap, and it brings its own attribute language to learn next to the templates.
+
+**Options.**
+1. Plain forms only. Every edit reloads the page.
+2. HTMX, as ADR-0006 planned.
+3. A single hand-written `static/app.js`, vanilla, embedded like the stylesheet.
+
+**Decision.** Option 3, with a hard boundary: **every control works with JavaScript disabled.**
+
+Each editable value is a real `<form>` with a real `action` and `method`, posting to the same `/actions/...` route it always did. `app.js` intercepts the submit, sends the same body with an `X-Requested-With: nuno-inline-edit` header, and swaps the returned value in place with a "saved" pill that fades. The handlers branch on that header alone: with it they answer a small JSON object, without it they redirect back to the page the form names, exactly as before. Nothing in the domain is reachable through a path the no-JavaScript form does not also take.
+
+**Consequences.**
+- No framework and no build step. One file, no dependency, no vendored library, served from the same `embed.FS` as the stylesheet, so the container still works with no outbound network.
+- The rule from ADR-0006 that every UI action maps to an API route survives intact, and is now load-bearing: the JSON branch and the redirect branch are the same handler, so an action cannot gain behavior that only the enhanced path can reach.
+- Forms carry a `return` field naming the page to come back to, which is what makes one action route serve five pages. Only a local path is honoured, so it cannot become an open redirect.
+- The toggle for guarded changes is **not** part of this: it is a real checkbox styled with CSS and a `:checked` sibling selector, because an on/off control needs no script.
+- If a page ever needs more than this, it is a new ADR, not a quiet dependency.

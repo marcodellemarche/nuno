@@ -41,6 +41,22 @@ func TestMeServesTheCallersOwnQuota(t *testing.T) {
 	}
 }
 
+// The iframe is a separate document and cannot inherit the dashboard's text
+// color, so the widget tells the page which theme it is on.
+func TestMeCarriesTheThemeFromTheWidget(t *testing.T) {
+	mux := meRoutes(t, populated(), "10.0.0.0/8")
+
+	req := httptest.NewRequest(http.MethodGet, "/me?theme=dark", nil)
+	req.RemoteAddr = "10.1.2.3:5555"
+	req.Header.Set("Remote-User", "alice")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if body := rec.Body.String(); !strings.Contains(body, `class="theme-dark"`) {
+		t.Errorf("the page must carry the theme the widget asked for: %s", body)
+	}
+}
+
 // A header is believed only from the proxy. Otherwise any container on the
 // same network could read somebody else's quota.
 func TestMeRefusesAnUntrustedSource(t *testing.T) {

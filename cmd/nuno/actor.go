@@ -152,6 +152,33 @@ func (s *serverActor) Link(ctx context.Context, uid, provider, externalID string
 	return fmt.Errorf("%s has no observed account %q: read the provider again first", provider, externalID)
 }
 
+// MapGroup is the edge group membership turns into a tier (FR-4). The tier is
+// named rather than numbered, because the page shows names and a name is what
+// an admin can check.
+func (s *serverActor) MapGroup(ctx context.Context, groupUUID, tier string, unmap bool) error {
+	if unmap {
+		removed, err := s.app.db.UnmapGroup(ctx, groupUUID)
+		if err != nil {
+			return err
+		}
+		if !removed {
+			return fmt.Errorf("that group was not mapped to a tier")
+		}
+		return nil
+	}
+
+	policy, err := s.app.db.LoadPolicy(ctx)
+	if err != nil {
+		return err
+	}
+	for _, candidate := range policy.Tiers {
+		if strings.EqualFold(candidate.Name, tier) {
+			return s.app.db.MapGroupToTier(ctx, groupUUID, candidate.ID)
+		}
+	}
+	return fmt.Errorf("no tier %q", tier)
+}
+
 func (s *serverActor) IssueKey(ctx context.Context, label string) (core.Secret, error) {
 	return s.app.db.IssueAdminKey(ctx, label)
 }

@@ -1,0 +1,72 @@
+{{/* SPDX-License-Identifier: AGPL-3.0-or-later */}}
+{{define "content"}}
+<div class="head-row">
+  <h1>Activity</h1>
+  {{if .Editable}}
+  <div class="actions">
+    <form method="post" action="/actions/observe">
+      <input type="hidden" name="return" value="/activity">
+      <button class="btn" type="submit" title="Reads current usage from every service. Nothing is written."><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.3"></path><path d="M21 3v6h-6"></path></svg> Read every service now</button>
+    </form>
+    <form method="post" action="/actions/reconcile">
+      <input type="hidden" name="return" value="/activity">
+      <button class="btn" type="submit" title="Applies every ceiling change that's safe: raises, and any change nobody is already over.">Reconcile</button>
+      <label class="toggle" title="Off: a change that would land at or below what somebody already stores is skipped. On: it's applied anyway, which can block their uploads immediately. The timer never can.">
+        <input type="checkbox" name="allow_shrink" value="1">
+        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        also apply guarded changes
+      </label>
+    </form>
+  </div>
+  {{end}}
+</div>
+<p class="sub">What Nuno has done, and when. A guarded change lands at or below what somebody already stores.</p>
+
+<section>
+  <h2>Recent runs</h2>
+  {{if .Runs}}
+  <table>
+    <thead><tr><th>Run</th><th>When</th><th>Mode</th><th>Actor</th><th>Consent</th><th>Status</th><th>Outcome</th></tr></thead>
+    <tbody>
+    {{range .Runs}}
+      <tr>
+        <td>#{{.ID}}</td>
+        <td>{{.StartedAt.Format "01-02 15:04"}}</td>
+        <td>{{.Mode}}</td>
+        <td{{if eq .Actor "scheduler"}} class="muted"{{end}}>{{.Actor}}</td>
+        <td>{{if .Consent}}shrink{{else}}<span class="muted">&mdash;</span>{{end}}</td>
+        <td class="run-status run-{{.Status}}">{{.Status}}</td>
+        <td class="muted">{{.Summary}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="muted">No runs yet.</p>
+  {{end}}
+</section>
+
+<section>
+  <h2>Recent changes</h2>
+  {{if .Changes}}
+  <table>
+    <thead><tr><th>When</th><th>Person</th><th>Service</th><th>From</th><th>To</th><th>Result</th><th>Detail</th></tr></thead>
+    <tbody>
+    {{range .Changes}}
+      <tr>
+        <td>{{.At.Format "01-02 15:04"}}</td>
+        <td>{{.User}}</td>
+        <td>{{.Provider}}</td>
+        <td>{{.From}}</td>
+        <td>{{.To}}</td>
+        <td><span class="kind kind-{{.Result}}">{{.Result}}</span></td>
+        <td class="muted">{{.Detail}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="muted">Nothing has been changed yet.</p>
+  {{end}}
+</section>
+{{end}}

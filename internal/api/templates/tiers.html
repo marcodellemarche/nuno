@@ -1,0 +1,115 @@
+{{/* SPDX-License-Identifier: AGPL-3.0-or-later */}}
+{{define "content"}}
+<h1>Tiers</h1>
+<p class="sub">Ceilings applied automatically, by directory group or by default to everyone else. A personal override set on Quotas always wins over these.</p>
+
+<div class="tiers-row">
+  {{range .Tiers}}
+  <div class="tier-card">
+    <div class="tier-card-head">
+      <strong>{{.Name}}</strong>
+      {{if .IsDefault}}
+      <span class="default-flag">default</span>
+      {{else if $.Editable}}
+      <form method="post" action="/actions/tier">
+        <input type="hidden" name="return" value="/tiers">
+        <input type="hidden" name="name" value="{{.Name}}">
+        <input type="hidden" name="budget" value="{{.BudgetValue}}">
+        <input type="hidden" name="is_default" value="1">
+        {{range .Allocations}}<input type="hidden" name="alloc_{{.ProviderID}}" value="{{.Value}}">{{end}}
+        <button class="default-flag" type="submit" title="Everyone with no group-mapped tier gets this one">make default</button>
+      </form>
+      {{end}}
+      <span class="member-count computed" title="The budget percentage allocations resolve against, set with nuno policy. It is an input, not the sum below.">{{if .Budget}}{{.Budget}}{{else}}no budget{{end}}</span>
+      {{if .Overcommit}}<span class="flag" title="Its percentages add up to more than 100, which over-commits deliberately">over-commits</span>{{end}}
+    </div>
+    {{$tier := .}}
+    {{range .Allocations}}
+    <div class="alloc-row">
+      <span>{{.Provider}}</span>
+      {{if $.Editable}}
+      <form class="edit-form" method="post" action="/actions/tier" data-edit data-display="{{if .Value}}{{.Value}}{{else}}none{{end}}">
+        <input type="hidden" name="return" value="/tiers">
+        <input type="hidden" name="name" value="{{$tier.Name}}">
+        <input type="hidden" name="budget" value="{{$tier.BudgetValue}}">
+        {{if $tier.IsDefault}}<input type="hidden" name="is_default" value="1">{{end}}
+        <input type="hidden" name="edited" value="{{.ProviderID}}">
+        {{$edited := .ProviderID}}
+        {{range $tier.Allocations}}{{if ne .ProviderID $edited}}<input type="hidden" name="alloc_{{.ProviderID}}" value="{{.Value}}">{{end}}{{end}}
+        <input class="q" type="text" name="alloc_{{.ProviderID}}" value="{{.Value}}" placeholder="none" aria-label="{{$tier.Name}} allocation on {{.Provider}}">
+        <button class="icon-btn ok" type="submit" title="Save this allocation">{{template "icon-check"}}</button>
+      </form>
+      {{else}}
+      <span>{{if .Value}}{{.Value}}{{else}}none{{end}}</span>
+      {{end}}
+    </div>
+    {{end}}
+    <p class="groups-label">Groups</p>
+    <div class="chip-row">
+      {{range .Groups}}
+      <span class="chip" data-chip>{{.Name}} <span class="count">{{.Members}}</span>
+        {{if $.Editable}}
+        <form method="post" action="/actions/group" data-fetch data-on-ok="remove">
+          <input type="hidden" name="return" value="/tiers">
+          <input type="hidden" name="group" value="{{.UUID}}">
+          <input type="hidden" name="unmap" value="1">
+          <button class="chip-btn" type="submit" title="Stop mapping {{.Name}} to {{$tier.Name}}" aria-label="remove {{.Name}}">{{template "icon-cross"}}</button>
+        </form>
+        {{end}}
+      </span>
+      {{end}}
+      {{if and $.Editable $.Unmapped}}
+      <details class="reveal">
+        <summary><span class="chip-ghost">{{template "icon-plus"}} group</span></summary>
+        <form class="row-form" method="post" action="/actions/group">
+          <input type="hidden" name="return" value="/tiers">
+          <input type="hidden" name="tier" value="{{.Name}}">
+          <select name="group" aria-label="directory group">
+            {{range $.Unmapped}}<option value="{{.UUID}}">{{.Name}} ({{.Members}})</option>{{end}}
+          </select>
+          <button type="submit">Add</button>
+        </form>
+      </details>
+      {{end}}
+    </div>
+  </div>
+  {{end}}
+
+  {{if .Editable}}
+  <div class="ghost-card">
+    <details class="reveal">
+      <summary><span class="edit">{{template "icon-plus"}} new tier</span></summary>
+      <form class="row-form" method="post" action="/actions/tier">
+        <input type="hidden" name="return" value="/tiers">
+        <input type="text" name="name" placeholder="standard" size="12" required aria-label="tier name">
+        <input type="text" name="budget" placeholder="budget, 200GiB" size="14" aria-label="budget">
+        {{range .Fields}}
+        <input type="text" name="alloc_{{.ID}}" placeholder="{{.Name}}: 25% or 50GiB" size="18" aria-label="{{.Name}} allocation">
+        {{end}}
+        <label class="btn-note"><input type="checkbox" name="is_default" value="1"> default</label>
+        <button type="submit">Create</button>
+      </form>
+    </details>
+  </div>
+  {{end}}
+</div>
+
+{{if not .Tiers}}
+<p class="muted">No tiers yet. The ghost card above creates the first one.</p>
+{{end}}
+
+<p class="hint">An empty allocation means the tier says nothing about that service, which is not the
+same as zero: Nuno leaves it alone. <strong>The most generous ceiling wins, per service, so adding
+somebody to a stricter tier does not restrict them.</strong> Demoting means removing the generous group.</p>
+
+{{if .Unmapped}}
+<div class="unassigned">
+  {{if .DefaultTier}}
+  <span class="lbl">Not mapped to a tier, so they fall back to <strong>{{.DefaultTier}}</strong>:</span>
+  {{else}}
+  <span class="lbl">Not mapped to a tier, and there is no default tier, so nothing allocates for them:</span>
+  {{end}}
+  {{range .Unmapped}}<span class="chip">{{.Name}} <span class="count">{{.Members}}</span></span>{{end}}
+</div>
+{{end}}
+{{end}}

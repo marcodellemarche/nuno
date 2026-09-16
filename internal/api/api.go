@@ -67,8 +67,14 @@ func Routes(opts Options) *http.ServeMux {
 	// else's. It trusts the forward-auth header, and only from the proxy.
 	mux.HandleFunc("GET /me", meHandler(opts))
 
-	page := basicAuth(opts.AdminPassword, pageHandler(opts))
-	mux.Handle("GET /{$}", page)
+	// Five pages, one per tab, each a real route: the tab bar is navigation,
+	// not a client-side toggle.
+	admin := func(next http.HandlerFunc) http.Handler { return basicAuth(opts.AdminPassword, next) }
+	mux.Handle("GET /{$}", admin(quotasHandler(opts)))
+	mux.Handle("GET /tiers", admin(tiersHandler(opts)))
+	mux.Handle("GET /services", admin(servicesHandler(opts)))
+	mux.Handle("GET /accounts", admin(accountsHandler(opts)))
+	mux.Handle("GET /activity", admin(activityHandler(opts)))
 	mux.Handle("GET /static/", http.StripPrefix("/static/", staticHandler()))
 	registerActions(mux, opts)
 	return mux

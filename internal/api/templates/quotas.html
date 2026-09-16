@@ -1,0 +1,103 @@
+{{/* SPDX-License-Identifier: AGPL-3.0-or-later */}}
+{{define "content"}}
+<div class="head-row">
+  <h1>Quotas</h1>
+  <div class="toolbar">
+    <form class="search" method="get" action="/">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+      <input type="text" name="q" value="{{.Query}}" placeholder="Search people&hellip;" aria-label="Search people">
+    </form>
+  </div>
+</div>
+<p class="sub">One card per customer. Click a ceiling to change it &mdash; no separate form to open.</p>
+
+{{if .People}}
+<div class="cards">
+  {{range .People}}
+  <div class="card">
+    <div class="card-head">
+      <h3>{{.UID}}</h3>
+      {{range .TierPills}}<span class="tier-pill">{{.}}</span>{{end}}
+      <div class="totals">
+        <span>{{.Used}} of {{.Budget}}</span>
+        {{if .Partial}}<span class="flag" title="At least one provider did not answer, so these totals are partial">partial</span>{{end}}
+        <div class="total-bar"><div class="total-fill {{.Fill}}" style="width: {{.Percent}}%"></div></div>
+      </div>
+    </div>
+    {{if .Rows}}
+    <table>
+      <thead><tr><th>Service</th><th>Used</th><th>Ceiling</th><th>Share</th><th>Status</th></tr></thead>
+      <tbody>
+        {{$person := .UID}}
+        {{range .Rows}}
+        <tr>
+          <td>{{title .Provider}} <span class="svc-type">{{.Type}}</span></td>
+          <td>{{.Used}}</td>
+          <td>
+            {{if $.Editable}}
+            <form class="edit-form" method="post" action="/actions/override" data-edit data-display="{{.Ceiling}}">
+              <input type="hidden" name="return" value="/">
+              <input type="hidden" name="user" value="{{$person}}">
+              <input type="hidden" name="provider" value="{{.Provider}}">
+              <input class="q" type="text" name="quota" value="{{.Edit}}" title="Empty this to clear the override and let the tier decide again" aria-label="ceiling for {{$person}} on {{.Provider}}">
+              <button class="icon-btn ok" type="submit" title="Save this ceiling">{{template "icon-check"}}</button>
+            </form>
+            {{else}}{{.Ceiling}}{{end}}
+            {{if .Override}}<span class="tier-pill" title="Set for this person only, above their tier">override</span>{{end}}
+          </td>
+          <td class="bar-cell"><div class="bar" title="{{if .Percent}}{{.Percent}}%{{else}}no ceiling to measure against{{end}}"><div class="fill {{.Fill}}" style="width: {{.Percent}}%"></div></div></td>
+          {{if .Linked}}
+          <td><span class="status status-{{.Status}}">{{.Status}}</span></td>
+          {{else}}
+          <td class="muted">no linked account</td>
+          {{end}}
+        </tr>
+        {{end}}
+        {{if and $.Editable .Elsewhere}}
+        <tr class="ghost-row">
+          <td colspan="5">
+            <details class="reveal">
+              <summary><span class="edit">{{template "icon-plus"}} add a ceiling for another service</span></summary>
+              <form class="row-form" method="post" action="/actions/override">
+                <input type="hidden" name="return" value="/">
+                <input type="hidden" name="user" value="{{$person}}">
+                <select name="provider" aria-label="service">
+                  {{range .Elsewhere}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+                </select>
+                <input type="text" name="quota" placeholder="100GiB or unlimited" size="16" aria-label="ceiling">
+                <button type="submit">Set override</button>
+                <span class="btn-note">An override sits above every tier. An empty ceiling clears it.</span>
+              </form>
+            </details>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <p class="muted">No linked account on any provider.</p>
+    {{if $.Editable}}
+    <details class="reveal">
+      <summary><span class="edit">{{template "icon-plus"}} add a ceiling for another service</span></summary>
+      <form class="row-form" method="post" action="/actions/override">
+        <input type="hidden" name="return" value="/">
+        <input type="hidden" name="user" value="{{.UID}}">
+        <select name="provider" aria-label="service">
+          {{range .Elsewhere}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+        </select>
+        <input type="text" name="quota" placeholder="100GiB or unlimited" size="16" aria-label="ceiling">
+        <button type="submit">Set override</button>
+        <span class="btn-note">An override sits above every tier. An empty ceiling clears it.</span>
+      </form>
+    </details>
+    {{end}}
+    {{end}}
+  </div>
+  {{end}}
+</div>
+{{else if .Query}}
+<p class="muted">Nobody matches &ldquo;{{.Query}}&rdquo;.</p>
+{{else}}
+<p class="muted">Nobody yet. Configure an identity source, or add someone with <code>nuno users add &lt;uid&gt; [email]</code>, then run <code>nuno observe</code>.</p>
+{{end}}
+{{end}}

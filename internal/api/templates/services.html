@@ -1,0 +1,75 @@
+{{/* SPDX-License-Identifier: AGPL-3.0-or-later */}}
+{{define "content"}}
+<h1>Services</h1>
+<p class="sub">What Nuno can see and write to, right now.</p>
+
+<section>
+  {{if .Providers}}
+  <div class="svc-row">
+    {{range .Providers}}
+    <div class="svc-card">
+      <div class="svc-card-head">
+        <h3>{{title .Name}}</h3>
+        <span class="svc-type">{{.Type}}</span>
+        {{if .Reachable}}
+        <span class="status status-ok">reachable</span>
+        {{else}}
+        <span class="status status-bad">unreachable</span>
+        {{end}}
+      </div>
+      <dl class="svc-meta">
+        <dt>Version</dt><dd>{{if .Version}}{{.Version}}{{else}}&mdash;{{end}}</dd>
+        <dt>Supported</dt><dd>{{if .InSupported}}yes{{else}}<span class="flag">outside</span>{{end}}</dd>
+        <dt>Write access</dt><dd>{{.WriteAccess}}</dd>
+        <dt>Last read</dt><dd>{{if .LastObserve}}{{.LastObserve.Format "2006-01-02 15:04 UTC"}}{{else}}never{{end}}</dd>
+      </dl>
+      {{if .Degraded}}<div class="degraded">Degraded: {{.Degraded}}</div>{{end}}
+      {{if .LastError}}<div class="degraded">{{.LastError}}</div>{{end}}
+    </div>
+    {{end}}
+  </div>
+  {{else}}
+  <p class="muted">No providers configured.</p>
+  {{end}}
+  <p class="svc-note">A service is added in the configuration, with <code>NUNO_PROVIDER_&lt;NAME&gt;_TYPE</code> and <code>_URL</code>, then read with <code>nuno observe</code>. Nuno never reconfigures the services it manages.</p>
+</section>
+
+<section>
+  <h2>Keys for the usage API</h2>
+  <p class="muted">Read-only, for a dashboard widget. A key is shown once and stored as a hash.</p>
+  {{if .Keys}}
+  <table>
+    <thead><tr><th>Key</th><th>Label</th><th>Source</th><th>Created</th><th>Last used</th><th>State</th><th></th></tr></thead>
+    <tbody>
+    {{range .Keys}}
+      <tr>
+        <td>{{.ID}}</td>
+        <td>{{.Label}}</td>
+        <td>{{.Source}}</td>
+        <td>{{.CreatedAt.Format "2006-01-02"}}</td>
+        <td>{{if .LastUsedAt}}{{.LastUsedAt.Format "2006-01-02 15:04"}}{{else}}never{{end}}</td>
+        <td>{{if .Revoked}}<span class="bad">revoked</span>{{else}}active{{end}}</td>
+        <td>
+          {{if and $.Editable (not .Revoked)}}
+          <form method="post" action="/actions/keys">
+            <input type="hidden" name="return" value="/services">
+            <button type="submit" name="revoke" value="{{.ID}}">Revoke</button>
+          </form>
+          {{end}}
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="muted">No keys. Without one, <code>/api/v1/usage</code> refuses every request.</p>
+  {{end}}
+  {{if .Editable}}
+  <form class="row-form" method="post" action="/actions/keys">
+    <input type="hidden" name="return" value="/services">
+    <label class="btn-note">label <input type="text" name="label" placeholder="homepage widget" size="20"></label>
+    <button type="submit">Issue a key</button>
+  </form>
+  {{end}}
+</section>
+{{end}}

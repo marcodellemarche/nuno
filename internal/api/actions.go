@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -24,6 +25,7 @@ type Actor interface {
 	SaveTier(ctx context.Context, tier core.Tier) error
 	SetOverride(ctx context.Context, uid, provider string, quota core.Quota, clear bool) error
 	Link(ctx context.Context, uid, provider, externalID string, unlink bool) error
+	MapGroup(ctx context.Context, groupUUID, tier string, unmap bool) error
 	IssueKey(ctx context.Context, label string) (core.Secret, error)
 	RevokeKey(ctx context.Context, id int64) error
 }
@@ -43,6 +45,7 @@ func registerActions(mux *http.ServeMux, opts Options) {
 	mux.Handle("POST /actions/tier", guard(actionTier(opts)))
 	mux.Handle("POST /actions/override", guard(actionOverride(opts)))
 	mux.Handle("POST /actions/link", guard(actionLink(opts)))
+	mux.Handle("POST /actions/group", guard(actionGroup(opts)))
 	mux.Handle("POST /actions/keys", guard(actionKeys(opts)))
 }
 
@@ -72,8 +75,37 @@ func sameOrigin(opts Options, next http.HandlerFunc) http.HandlerFunc {
 // redirect sends the browser back to the page with a message. Messages go in
 // the query string, so nothing secret may travel this way.
 func redirect(w http.ResponseWriter, r *http.Request, kind, message string) {
-	target := "/?" + kind + "=" + url.QueryEscape(message)
+	respond(w, r, kind, message, "")
+}
+
+// respond answers the same action two ways. A plain form post is a redirect
+// back to the page it came from; the inline editor asks for the value instead,
+// so it can swap it in without a reload. One route, two shapes, and the form
+// works with no JavaScript at all (ADR-0006, ADR-0030).
+func respond(w http.ResponseWriter, r *http.Request, kind, message, value string) {
+	if r.Header.Get("X-Requested-With") == "nuno-inline-edit" {
+		code := http.StatusOK
+		if kind == "err" {
+			code = http.StatusBadRequest
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(code)
+		json.NewEncoder(w).Encode(map[string]string{kind: message, "value": value})
+		return
+	}
+	target := returnTo(r) + "?" + kind + "=" + url.QueryEscape(message)
 	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+// returnTo keeps a form post on the page it was submitted from. Only a local
+// path is honoured, so the field cannot become an open redirect.
+func returnTo(r *http.Request) string {
+	target, _, _ := strings.Cut(r.PostFormValue("return"), "?")
+	if strings.HasPrefix(target, "/") && !strings.HasPrefix(target, "//") {
+		return target
+	}
+	return "/"
 }
 
 func actionReconcile(opts Options) http.HandlerFunc {
@@ -168,7 +200,7 @@ func actionTier(opts Options) http.HandlerFunc {
 		if tier.Overcommitted() {
 			message += " Its percentages add up to more than 100, which over-commits deliberately."
 		}
-		redirect(w, r, "ok", message)
+		respond(w, r, "ok", message, editedAllocation(r, tier))
 	}
 }
 
@@ -197,10 +229,13 @@ func actionOverride(opts Options) http.HandlerFunc {
 			return
 		}
 		if clear {
-			redirect(w, r, "ok", fmt.Sprintf("cleared the override for %s on %s: their tier decides again", uid, provider))
+			respond(w, r, "ok",
+				fmt.Sprintf("cleared the override for %s on %s: their tier decides again", uid, provider), "—")
 			return
 		}
-		redirect(w, r, "ok", fmt.Sprintf("%s now has %s on %s, above any tier. Run a reconcile to apply it.", uid, quota, provider))
+		respond(w, r, "ok",
+			fmt.Sprintf("%s now has %s on %s, above any tier. Run a reconcile to apply it.", uid, quota, provider),
+			quota.String())
 	}
 }
 
@@ -224,6 +259,57 @@ func actionLink(opts Options) http.HandlerFunc {
 			return
 		}
 		redirect(w, r, "ok", fmt.Sprintf("linked %s to %s on %s", uid, externalID, provider))
+	}
+}
+
+// editedAllocation names the value the inline editor should show back. Only
+// that form says which allocation it changed; a plain form post says nothing
+// and gets a redirect.
+func editedAllocation(r *http.Request, tier core.Tier) string {
+	id := strings.TrimSpace(r.PostFormValue("edited"))
+	if id == "" {
+		return ""
+	}
+	providerID, err := strconv.ParseInt(id, 10, 64)
+	if err != nil {
+		return ""
+	}
+	for _, allocation := range tier.Allocations {
+		if allocation.ProviderID == providerID {
+			return allocation.Describe()
+		}
+	}
+	// An allocation that was cleared is not zero: the tier is silent about
+	// that service now (FR-17).
+	return "none"
+}
+
+// actionGroup maps a directory group to a tier, or takes the mapping away,
+// which is what the chips on the Tiers page do.
+func actionGroup(opts Options) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			redirect(w, r, "err", "malformed form")
+			return
+		}
+		group := strings.TrimSpace(r.PostFormValue("group"))
+		tier := strings.TrimSpace(r.PostFormValue("tier"))
+		unmap := r.PostFormValue("unmap") != ""
+		if group == "" {
+			redirect(w, r, "err", "no group was chosen")
+			return
+		}
+
+		if err := opts.Actor.MapGroup(r.Context(), group, tier, unmap); err != nil {
+			redirect(w, r, "err", err.Error())
+			return
+		}
+		if unmap {
+			respond(w, r, "ok",
+				"that group no longer maps to a tier, so its members fall back to the default one", "")
+			return
+		}
+		respond(w, r, "ok", "that group now follows "+tier+". Run a reconcile to apply it.", "")
 	}
 }
 
@@ -263,7 +349,7 @@ func actionKeys(opts Options) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		if err := pageTemplate.ExecuteTemplate(w, "key.html", struct {
+		if err := keyTemplate.ExecuteTemplate(w, "key.html", struct {
 			Label string
 			Value string
 		}{Label: label, Value: value.Reveal()}); err != nil {

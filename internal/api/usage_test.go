@@ -27,7 +27,8 @@ type fakeStore struct {
 	keyCount     int
 	policy       core.Policy
 	userPolicies map[int64]core.UserPolicy
-	groups       map[string]string
+	groups       []core.Group
+	links        []core.AccountLink
 	runs         []store.RunSummary
 	changes      []store.AuditRow
 	adminKeys    []store.AdminKeyRow
@@ -41,6 +42,8 @@ func (f *fakeStore) ListProviders(context.Context) ([]store.ProviderRow, error) 
 func (f *fakeStore) ListAllExternalAccounts(context.Context) ([]core.ExternalAccount, error) {
 	return f.accounts, f.err
 }
+func (f *fakeStore) ListGroups(context.Context) ([]core.Group, error)         { return f.groups, f.err }
+func (f *fakeStore) ListLinks(context.Context) ([]core.AccountLink, error)    { return f.links, f.err }
 func (f *fakeStore) ListLinkIssues(context.Context) ([]core.LinkIssue, error) { return f.issues, f.err }
 func (f *fakeStore) CheckAdminKey(_ context.Context, presented core.Secret) (bool, error) {
 	return f.keys[presented.Reveal()], nil
@@ -54,9 +57,6 @@ func (f *fakeStore) UserPolicy(_ context.Context, userID int64) (core.UserPolicy
 		up = core.UserPolicy{ProviderOverrides: map[int64]core.Quota{}}
 	}
 	return up, nil, f.err
-}
-func (f *fakeStore) GroupsWithTiers(context.Context) (map[string]string, error) {
-	return f.groups, f.err
 }
 func (f *fakeStore) LastRuns(context.Context, int) ([]store.RunSummary, error) { return f.runs, f.err }
 func (f *fakeStore) RecentChanges(context.Context, int) ([]store.AuditRow, error) {
@@ -279,19 +279,43 @@ func TestUsageReportsAStoreFailureRatherThanEmptyData(t *testing.T) {
 	}
 }
 
-func TestThePageRenders(t *testing.T) {
-	mux := routes(t, populated(), "")
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("code = %d: %s", rec.Code, rec.Body.String())
+// Each tab is a real page, so what used to be one render is five.
+func TestEveryPageRenders(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+		want []string
+	}{
+		{"quotas", "/", []string{"alice", "cloud", "50 GiB", "1 GiB"}},
+		{"tiers", "/tiers", []string{"Tiers", "most generous ceiling wins"}},
+		{"services", "/services", []string{"Cloud", "34.0.4", "unproven", "Keys for the usage API"}},
+		{"accounts", "/accounts", []string{"nc-alice", "alice", "Needs a decision"}},
+		{"activity", "/activity", []string{"Recent runs", "Recent changes"}},
 	}
-	body := rec.Body.String()
-	for _, want := range []string{"alice", "cloud", "50 GiB", "1 GiB", "34.0.4", "unproven"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("the page is missing %q", want)
-		}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := populated()
+			s.issues = []core.LinkIssue{{ProviderID: 10, Kind: core.IssueUnmanaged, ExternalID: "nc-ghost"}}
+			mux := routes(t, s, "")
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, c.path, nil))
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("code = %d: %s", rec.Code, rec.Body.String())
+			}
+			body := rec.Body.String()
+			for _, want := range c.want {
+				if !strings.Contains(body, want) {
+					t.Errorf("%s is missing %q", c.path, want)
+				}
+			}
+			// The tab bar is on every page, so every page can reach the rest.
+			for _, tab := range []string{`href="/tiers"`, `href="/services"`, `href="/accounts"`, `href="/activity"`} {
+				if !strings.Contains(body, tab) {
+					t.Errorf("%s does not link %s", c.path, tab)
+				}
+			}
+		})
 	}
 }
 

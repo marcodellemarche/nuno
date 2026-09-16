@@ -1,0 +1,46 @@
+{{/* SPDX-License-Identifier: AGPL-3.0-or-later */}}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nuno: {{.Tab}}</title>
+<link rel="stylesheet" href="/static/nuno.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<div class="page page-{{.Slug}}">
+  <nav class="tabs">
+    <a class="tab{{if eq .Tab "Quotas"}} active{{end}}" href="/">Quotas</a>
+    <a class="tab{{if eq .Tab "Tiers"}} active{{end}}" href="/tiers">Tiers</a>
+    <a class="tab{{if eq .Tab "Services"}} active{{end}}" href="/services">Services</a>
+    <a class="tab{{if eq .Tab "Accounts"}} active{{end}}" href="/accounts">Accounts</a>
+    <a class="tab{{if eq .Tab "Activity"}} active{{end}}" href="/activity">Activity</a>
+  </nav>
+
+  {{if .OK}}<section class="flash ok"><p>{{.OK}}</p></section>{{end}}
+  {{if .Error}}<section class="flash bad"><p>{{.Error}}</p></section>{{end}}
+
+  {{if .Warnings}}
+  <section class="warnings">
+    <h2>Needs attention</h2>
+    <ul>
+      {{range .Warnings}}<li>{{.}}</li>{{end}}
+    </ul>
+  </section>
+  {{end}}
+
+  {{template "content" .}}
+
+  <footer>
+    nuno {{.Version}} &middot; rendered {{.Now.Format "2006-01-02 15:04 UTC"}} &middot;
+    a number is only as fresh as its status says
+  </footer>
+</div>
+</body>
+</html>
+
+{{define "icon-pencil"}}<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>{{end}}
+{{define "icon-plus"}}<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"></path></svg>{{end}}
+{{define "icon-cross"}}<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"></path></svg>{{end}}
+{{define "icon-check"}}<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"></path></svg>{{end}}

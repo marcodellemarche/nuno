@@ -12,19 +12,20 @@ import (
 	"github.com/marcodellemarche/nuno/internal/store"
 )
 
-// Store is what the HTTP surface reads. Narrowing it to these five calls keeps
-// the handlers testable without a database.
+// Store is what the HTTP surface reads. Narrowing it to these calls keeps the
+// handlers testable without a database.
 type Store interface {
 	ListUsers(ctx context.Context) ([]core.User, error)
+	ListGroups(ctx context.Context) ([]core.Group, error)
 	ListProviders(ctx context.Context) ([]store.ProviderRow, error)
 	ListAllExternalAccounts(ctx context.Context) ([]core.ExternalAccount, error)
+	ListLinks(ctx context.Context) ([]core.AccountLink, error)
 	ListLinkIssues(ctx context.Context) ([]core.LinkIssue, error)
 	CheckAdminKey(ctx context.Context, presented core.Secret) (bool, error)
 	CountAdminKeys(ctx context.Context) (int, error)
 
 	LoadPolicy(ctx context.Context) (core.Policy, error)
 	UserPolicy(ctx context.Context, userID int64) (core.UserPolicy, map[int64]store.OverrideOrigin, error)
-	GroupsWithTiers(ctx context.Context) (map[string]string, error)
 	LastRuns(ctx context.Context, limit int) ([]store.RunSummary, error)
 	RecentChanges(ctx context.Context, limit int) ([]store.AuditRow, error)
 	ListAdminKeys(ctx context.Context) ([]store.AdminKeyRow, error)

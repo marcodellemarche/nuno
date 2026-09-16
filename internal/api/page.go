@@ -8,7 +8,6 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
@@ -22,16 +21,34 @@ var templateFS embed.FS
 //go:embed static/*
 var staticFS embed.FS
 
-// The templates and the stylesheet are embedded, so the binary serves the UI
-// with no files on disk and the container works with no outbound network
+// The templates and the assets are embedded, so the binary serves the UI with
+// no files on disk and the container works with no outbound network
 // (ADR-0006).
-var pageTemplate = template.Must(template.New("page").Funcs(template.FuncMap{
+var templateFuncs = template.FuncMap{
 	"iec":      core.FormatIEC,
 	"quota":    quotaText,
 	"barWidth": barWidth,
-	// me.html is parsed by this glob too, so its helper must exist here.
-	"title": core.TitleCase,
-}).ParseFS(templateFS, "templates/*.html"))
+	"title":    core.TitleCase,
+}
+
+// Every page is the shared layout plus one content file. They are separate
+// template sets because each content file defines "content", and one set holds
+// one template of a given name.
+func mustPage(name string) *template.Template {
+	return template.Must(template.New("layout.html").Funcs(templateFuncs).
+		ParseFS(templateFS, "templates/layout.html", "templates/"+name))
+}
+
+var (
+	quotasTemplate   = mustPage("quotas.html")
+	tiersTemplate    = mustPage("tiers.html")
+	servicesTemplate = mustPage("services.html")
+	accountsTemplate = mustPage("accounts.html")
+	activityTemplate = mustPage("activity.html")
+
+	keyTemplate = template.Must(template.New("key.html").Funcs(templateFuncs).
+			ParseFS(templateFS, "templates/key.html"))
+)
 
 func staticHandler() http.Handler {
 	sub, err := fs.Sub(staticFS, "static")
@@ -41,128 +58,55 @@ func staticHandler() http.Handler {
 	return http.FileServer(http.FS(sub))
 }
 
-// pageData is everything the page renders. It is assembled here rather than in
-// the template, so the template stays a layout.
-type pageData struct {
-	Version   string
-	Now       time.Time
-	Usage     core.UsageResponse
-	Providers []providerView
-	Issues    []issueView
-	Warnings  []string
+// layout is what every page shares: the tab bar, the flash messages and the
+// warnings. Each page embeds it and adds its own data.
+type layout struct {
+	Version  string
+	Now      time.Time
+	Tab      string
+	Slug     string
+	Warnings []string
 
-	// Editable is false when no Actor is wired, which makes the page
+	// Editable is false when no Actor is wired, which makes the pages
 	// read-only rather than offering buttons that cannot work (FR-55).
 	Editable bool
 	OK       string
 	Error    string
-
-	Tiers     []tierView
-	Fields    []providerField
-	Groups    map[string]string
-	Users     []core.User
-	Runs      []store.RunSummary
-	Changes   []store.AuditRow
-	Keys      []store.AdminKeyRow
-	Unmanaged []unmanagedView
 }
 
-type tierView struct {
-	Name        string
-	Budget      string
-	IsDefault   bool
-	Allocations map[int64]string
-	Overcommit  bool
-}
-
-type unmanagedView struct {
-	Provider   string
-	ExternalID string
-}
-
-type providerView struct {
-	Name        string
-	Type        string
-	Version     string
-	Reachable   bool
-	InSupported bool
-	WriteAccess string
-	LastObserve *time.Time
-	LastError   string
-	Degraded    string
-}
-
-type issueView struct {
-	Provider string
-	Kind     string
-	Person   string
-	Account  string
-	Detail   string
-}
-
-// pageHandler renders the aggregate page. It degrades instead of failing when
-// Nuno is misconfigured: a missing credential shows as a warning and the page
-// still lists what it knows (FR-55).
-func pageHandler(opts Options) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		data := pageData{
-			Version:  opts.Version,
-			Now:      time.Now().UTC(),
-			Editable: opts.Actor != nil,
-			OK:       r.URL.Query().Get("ok"),
-			Error:    r.URL.Query().Get("err"),
-		}
-
-		// The admin page shows everyone, including the service accounts in the
-		// directory: an admin needs to see them to know they are not managed.
-		usage, err := buildUsage(r.Context(), opts, false)
-		if err != nil {
-			opts.Log.Error("page: build usage", "error", err)
-			data.Warnings = append(data.Warnings, "Usage could not be read from the database: "+err.Error())
-		}
-		data.Usage = usage
-
-		providers, err := opts.Store.ListProviders(r.Context())
-		if err != nil {
-			opts.Log.Error("page: read providers", "error", err)
-			data.Warnings = append(data.Warnings, "Providers could not be read: "+err.Error())
-		}
-		for _, p := range providers {
-			data.Providers = append(data.Providers, providerView{
-				Name:        p.Name,
-				Type:        p.Type,
-				Version:     p.Version,
-				Reachable:   p.Reachable,
-				InSupported: p.InSupported,
-				WriteAccess: p.WriteAccess.String(),
-				LastObserve: p.LastObserveAt,
-				LastError:   p.LastError,
-				Degraded:    p.DegradedReason,
-			})
-		}
-		data.Warnings = append(data.Warnings, warningsFor(providers, opts)...)
-
-		users, err := opts.Store.ListUsers(r.Context())
-		if err == nil {
-			data.Issues = issueViews(r.Context(), opts, providers, users)
-			for _, u := range users {
-				if u.Status == core.UserActive {
-					data.Users = append(data.Users, u)
-				}
-			}
-		}
-		data.Fields = providerFields(providers)
-		data.Tiers, data.Groups = policyViews(r.Context(), opts)
-		data.Runs, data.Changes = historyViews(r.Context(), opts)
-		data.Keys = keyViews(r.Context(), opts)
-		data.Unmanaged = unmanagedViews(data.Issues)
-
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		if err := pageTemplate.ExecuteTemplate(w, "page.html", data); err != nil {
-			opts.Log.Error("page: render", "error", err)
-		}
+func newLayout(opts Options, r *http.Request, tab string) layout {
+	return layout{
+		Version:  opts.Version,
+		Now:      time.Now().UTC(),
+		Tab:      tab,
+		Slug:     strings.ToLower(tab),
+		Editable: opts.Actor != nil,
+		OK:       r.URL.Query().Get("ok"),
+		Error:    r.URL.Query().Get("err"),
 	}
+}
+
+// render degrades instead of failing when Nuno is misconfigured: a missing
+// credential shows as a warning and the page still lists what it knows
+// (FR-55).
+func render(w http.ResponseWriter, opts Options, page *template.Template, data any) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	if err := page.ExecuteTemplate(w, "layout.html", data); err != nil {
+		opts.Log.Error("page: render", "error", err)
+	}
+}
+
+// providerRows is the one read every page makes, because the warnings belong
+// to the whole surface rather than to the Services page alone.
+func providerRows(ctx context.Context, opts Options, l *layout) []store.ProviderRow {
+	providers, err := opts.Store.ListProviders(ctx)
+	if err != nil {
+		opts.Log.Error("page: read providers", "error", err)
+		l.Warnings = append(l.Warnings, "Providers could not be read: "+err.Error())
+	}
+	l.Warnings = append(l.Warnings, warningsFor(providers, opts)...)
+	return providers
 }
 
 func warningsFor(providers []store.ProviderRow, opts Options) []string {
@@ -187,38 +131,6 @@ func warningsFor(providers []store.ProviderRow, opts Options) []string {
 			"No admin password is set, so this page is only as protected as whatever sits in front of it.")
 	}
 	return warnings
-}
-
-func issueViews(ctx context.Context, opts Options, providers []store.ProviderRow, users []core.User) []issueView {
-	issues, err := opts.Store.ListLinkIssues(ctx)
-	if err != nil {
-		opts.Log.Error("page: read link issues", "error", err)
-		return nil
-	}
-	providerNames := map[int64]string{}
-	for _, p := range providers {
-		providerNames[p.ID] = p.Name
-	}
-	userNames := map[int64]string{}
-	for _, u := range users {
-		userNames[u.ID] = u.UID
-	}
-
-	views := make([]issueView, 0, len(issues))
-	for _, issue := range issues {
-		person := ""
-		if issue.UserID != nil {
-			person = userNames[*issue.UserID]
-		}
-		views = append(views, issueView{
-			Provider: providerNames[issue.ProviderID],
-			Kind:     string(issue.Kind),
-			Person:   person,
-			Account:  issue.ExternalID,
-			Detail:   issue.Detail,
-		})
-	}
-	return views
 }
 
 // quotaText renders a ceiling for a human, distinguishing the states a number
@@ -251,66 +163,14 @@ func barWidth(percent *float64) int {
 	return int(*percent)
 }
 
-func policyViews(ctx context.Context, opts Options) ([]tierView, map[string]string) {
-	policy, err := opts.Store.LoadPolicy(ctx)
-	if err != nil {
-		opts.Log.Error("page: read policy", "error", err)
-		return nil, nil
+// fillFor picks the bar's colour from how full it is, leaving anything whose
+// numbers mean nothing in the muted shade rather than green.
+func fillFor(percent int, status string) string {
+	switch {
+	case status != core.StatusOK && status != core.StatusStale:
+		return "fill-bad"
+	case percent >= 90:
+		return "fill-warn"
 	}
-	var views []tierView
-	for _, tier := range policy.Tiers {
-		view := tierView{
-			Name:        tier.Name,
-			Budget:      tier.Budget.String(),
-			IsDefault:   tier.IsDefault,
-			Allocations: map[int64]string{},
-			Overcommit:  tier.Overcommitted(),
-		}
-		if !tier.Budget.IsKnown() {
-			view.Budget = ""
-		}
-		for _, allocation := range tier.Allocations {
-			view.Allocations[allocation.ProviderID] = allocation.Describe()
-		}
-		views = append(views, view)
-	}
-	slices.SortFunc(views, func(a, b tierView) int { return strings.Compare(a.Name, b.Name) })
-
-	groups, err := opts.Store.GroupsWithTiers(ctx)
-	if err != nil {
-		opts.Log.Error("page: read group mappings", "error", err)
-	}
-	return views, groups
-}
-
-func historyViews(ctx context.Context, opts Options) ([]store.RunSummary, []store.AuditRow) {
-	runs, err := opts.Store.LastRuns(ctx, 5)
-	if err != nil {
-		opts.Log.Error("page: read runs", "error", err)
-	}
-	changes, err := opts.Store.RecentChanges(ctx, 10)
-	if err != nil {
-		opts.Log.Error("page: read recent changes", "error", err)
-	}
-	return runs, changes
-}
-
-func keyViews(ctx context.Context, opts Options) []store.AdminKeyRow {
-	keys, err := opts.Store.ListAdminKeys(ctx)
-	if err != nil {
-		opts.Log.Error("page: read admin keys", "error", err)
-	}
-	return keys
-}
-
-// unmanagedViews pulls the accounts an admin can link, so the form next to the
-// issue has something to offer.
-func unmanagedViews(issues []issueView) []unmanagedView {
-	var views []unmanagedView
-	for _, issue := range issues {
-		if issue.Kind == string(core.IssueUnmanaged) {
-			views = append(views, unmanagedView{Provider: issue.Provider, ExternalID: issue.Account})
-		}
-	}
-	return views
+	return "fill-ok"
 }

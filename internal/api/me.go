@@ -56,12 +56,28 @@ func meHandler(opts Options) http.HandlerFunc {
 			return
 		}
 
+		// The page is a separate document, so it cannot inherit the dashboard's
+		// text color: an iframe has no idea it is sitting on a dark card. The
+		// widget says which theme it is on, and the page picks its colors from
+		// that; without it, the reader's own preference decides.
+		theme := r.URL.Query().Get("theme")
+		if theme != "dark" && theme != "light" {
+			theme = "auto"
+		}
+
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
-		if err := meTemplate.ExecuteTemplate(w, "me.html", found); err != nil {
+		if err := meTemplate.ExecuteTemplate(w, "me.html", mePage{User: *found, Theme: theme}); err != nil {
 			opts.Log.Error("me: render", "error", err)
 		}
 	}
+}
+
+// mePage is what the template renders: the person's usage, and the theme the
+// widget told us it is embedded in.
+type mePage struct {
+	User  core.UsageUser
+	Theme string
 }
 
 // fromTrustedProxy reports whether the request arrived from the configured
