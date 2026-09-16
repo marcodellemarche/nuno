@@ -25,7 +25,7 @@
 <section>
   <h2>Recent runs</h2>
   {{if .Runs}}
-  <table>
+  <table class="table-runs">
     <thead><tr><th>Run</th><th>When</th><th>Mode</th><th>Actor</th><th>Consent</th><th>Status</th><th>Outcome</th></tr></thead>
     <tbody>
     {{range .Runs}}
@@ -49,7 +49,7 @@
 <section>
   <h2>Recent changes</h2>
   {{if .Changes}}
-  <table>
+  <table class="table-changes">
     <thead><tr><th>When</th><th>Person</th><th>Service</th><th>From</th><th>To</th><th>Result</th><th>Detail</th></tr></thead>
     <tbody>
     {{range .Changes}}
