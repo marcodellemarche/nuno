@@ -45,7 +45,7 @@ Status legend: **MVP** means required for v0.1, **Later** means explicitly defer
 | FR-17 | A tier that declares no allocation for a provider MUST leave that provider untouched for the user. Absent MUST NOT be read as zero or as unlimited. | MVP |
 | FR-18 | Nuno MUST support an explicit unlimited allocation, distinct from an absent one. | MVP |
 | FR-19 | Nuno MUST show, per user and per provider, which tier produced the ceiling and by which rule (override, group, or default). | MVP |
-| FR-19a | The UI MUST state, where tiers are assigned, that a person cannot be restricted by adding a stricter tier: the most generous ceiling wins, so demotion means removing the generous group. | MVP |
+| FR-19a | Nuno MUST document, in the README and in `nuno tiers list`'s output, that a person cannot be restricted by adding a stricter tier: the most generous ceiling wins, so demotion means removing the generous group. The admin UI does not restate it inline. | MVP |
 
 ### Providers
 
