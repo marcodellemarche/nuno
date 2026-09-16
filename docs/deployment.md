@@ -54,7 +54,7 @@ Generate the admin key with `openssl rand -hex 32`, or issue one from the UI, wh
 ```yaml
 services:
   nuno:
-    image: ghcr.io/marcodellemarche/nuno:v0.1.0
+    image: ghcr.io/marcodellemarche/nuno:0.4.0
     container_name: nuno
     restart: unless-stopped
     env_file: .env
