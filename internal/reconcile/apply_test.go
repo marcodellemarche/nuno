@@ -130,7 +130,7 @@ func TestApplyRefusesAShrinkWithoutConsent(t *testing.T) {
 	}
 
 	// The refusal is audited: a guardrail that skipped silently would be the
-	// one thing AGENTS forbids.
+	// one thing CONTRIBUTING forbids.
 	entries, _ := h.db.RecentChanges(ctx, 10)
 	if len(entries) != 1 || entries[0].Result != store.AuditRefused {
 		t.Fatalf("audit = %+v", entries)

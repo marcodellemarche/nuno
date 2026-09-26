@@ -13,7 +13,7 @@ const redacted = "[redacted]"
 
 // Secret is a credential. Every way of rendering it is redacted, so the only
 // path to the value is Reveal, which makes each such point greppable. See
-// NFR-4 and rule 7 in AGENTS.md.
+// NFR-4 and rule 7 in CONTRIBUTING.md.
 type Secret string
 
 func (s Secret) String() string   { return redacted }

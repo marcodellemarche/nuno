@@ -14,7 +14,7 @@ ADR-0031 was raised after the first week of live use, when the stack surfaced th
 
 **Status: Accepted (2026-09-14).**
 
-**Context.** Nuno is a long-running controller with a small admin UI, a plugin system, LDAP and HTTP clients, and it must ship as a small self-hosted container. It will be developed largely by iterating with an AI coding agent.
+**Context.** Nuno is a long-running controller with a small admin UI, a plugin system, LDAP and HTTP clients, and it must ship as a small self-hosted container.
 
 **Options.**
 1. Python 3.12 with FastAPI, SQLModel, Alembic and HTMX. Fast to iterate, mature libraries, easy for contributors. Larger image and more RAM.

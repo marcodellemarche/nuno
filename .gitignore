@@ -16,15 +16,6 @@
 *.out
 vendor/
 
-# AI tooling, never committed
-CLAUDE.md
-.claude/
-.cursor/
-.cursorrules
-.aider*
-.github/copilot-instructions.md
-*.mdc
-
 # Editors and OS
 .idea/
 .vscode/

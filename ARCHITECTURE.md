@@ -279,7 +279,7 @@ Guarantees, stated as what is actually true:
 
 `unknown-state` means usage could not be trusted: the provider read failed, Nextcloud returned an incomplete quota object, or Immich's cached counter disagrees with the live aggregate beyond the threshold. A never-logged-in account with a complete quota object is not unknown, it is zero (ADR-0024). It is never applied and there is no flag to force it, because there is no safe consent for writing against state you do not have.
 
-The guardrail is the one sanctioned exception to "no silent skips" in `AGENTS.md`, and it is not silent: named in the plan, in the report, in the UI and in the exit status. Exit codes are a contract: 0 clean, 1 error, 2 applied but incomplete, 3 configuration or startup failure. `--dry-run` returns 2 when the plan is non-empty.
+The guardrail is the one sanctioned exception to "no silent skips" in `CONTRIBUTING.md`, and it is not silent: named in the plan, in the report, in the UI and in the exit status. Exit codes are a contract: 0 clean, 1 error, 2 applied but incomplete, 3 configuration or startup failure. `--dry-run` returns 2 when the plan is non-empty.
 
 ## 5. HTTP surface
 

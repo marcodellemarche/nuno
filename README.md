@@ -108,7 +108,6 @@ and the CLI also accept a percentage of the tier's budget, and `unlimited`.
 | [`ROADMAP.md`](ROADMAP.md) | Milestones from scaffold to v1 |
 | [`docs/decisions.md`](docs/decisions.md) | Architecture decision records, open and accepted |
 | [`docs/deployment.md`](docs/deployment.md) | Installing it: the two preconditions that bite, credentials, the dashboard widget, backup |
-| [`AGENTS.md`](AGENTS.md) | How AI coding agents should work in this repository |
 
 ## Running Nuno
 
@@ -136,7 +135,7 @@ Nuno needs credentials that can actually write. On Nextcloud an app password is 
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`AGENTS.md`](AGENTS.md). Issues and pull requests are welcome once the design stabilizes.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md). Issues and pull requests are welcome once the design stabilizes.
 
 ## Known to work with
 
