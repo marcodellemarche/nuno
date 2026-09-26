@@ -76,7 +76,7 @@ and the CLI also accept a percentage of the tier's budget, and `unlimited`.
 - [x] Identity: LLDAP / generic LDAP (read users and groups), plus manual users.
 - [x] Read usage per user per provider, aggregated in one view.
 - [x] Policies: default tier, per-group tiers, per-user overrides.
-- [x] Reconcile on a schedule or by hand (button and CLI) with dry-run, audit log, and guardrails: never shrink a quota to or below what someone already stores without explicit consent, and never write against state that could not be read. With `NUNO_RECONCILE_INTERVAL` set, a new directory user gets their ceiling within one cycle, no click needed.
+- [x] Reconcile on a schedule or by hand (button and CLI) with dry-run, audit log, and guardrails: never shrink a quota to or below what someone already stores without explicit consent, and never write against state that could not be read. With `NUNO_RECONCILE_INTERVAL` set (one minute on the homelab), a new directory user gets their ceiling within that interval, no click needed; no push exists in the chain, so the interval is the latency.
 - [x] Admin UI: list users, usage bars, edit budget, trigger reconcile.
 - [x] A JSON usage endpoint for a shared homepage dashboard, so people see what is left without opening two admin panels.
 - [x] Webhook notification when a reconcile fails or is blocked, with an optional bearer token for an authenticated endpoint such as ntfy.

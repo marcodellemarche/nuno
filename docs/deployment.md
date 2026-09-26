@@ -71,7 +71,7 @@ services:
       # configured too. It also runs once at startup and retries with backoff
       # while a service is not up yet, so a stack brought up all at once does
       # not need Nuno restarted once the others are ready.
-      # NUNO_RECONCILE_INTERVAL: 5m
+      # NUNO_RECONCILE_INTERVAL: 1m
       # NUNO_WEBHOOK_URL: https://ntfy.example.org/nuno
       # NUNO_WEBHOOK_TOKEN: the ntfy access token, sent as Authorization: Bearer
     ports:
