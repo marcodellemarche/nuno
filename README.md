@@ -4,7 +4,7 @@
 
 # Nuno
 
-> Status: **v0.5.1** (2026-09-26). Identity sync, linking, the usage page and endpoint, tiers and allocations, the planner and the applier with its guardrails all run, the CLI covers the day-two work, the admin panel works on a phone and edits ceilings in GiB, and a forward-auth `/me` page shows each person their own quota. A new directory user now gets their tier ceiling on a schedule without a restart or a click, and is shown as **quota pending** until their account appears. The image is published at `ghcr.io/marcodellemarche/nuno`. Not yet: the HTTP client mode that would let a command run against a live server, and a token-based per-person endpoint. The design is frozen and every decision is recorded.
+> Status: **v0.5.2** (2026-09-26). Identity sync, linking, the usage page and endpoint, tiers and allocations, the planner and the applier with its guardrails all run, the CLI covers the day-two work, the admin panel works on a phone and edits ceilings in GiB, and a forward-auth `/me` page shows each person their own quota. A new directory user now gets their tier ceiling on a schedule, without a restart or a click, and Nuno retries at startup while a service is not up yet. The image is published at `ghcr.io/marcodellemarche/nuno`. Not yet: the HTTP client mode that would let a command run against a live server, and a token-based per-person endpoint. The design is frozen and every decision is recorded.
 
 Nuno is a quota and usage control plane for self-hosted service stacks.
 
@@ -77,7 +77,7 @@ and the CLI also accept a percentage of the tier's budget, and `unlimited`.
 - [x] Read usage per user per provider, aggregated in one view.
 - [x] Policies: default tier, per-group tiers, per-user overrides.
 - [x] Reconcile on a schedule or by hand (button and CLI) with dry-run, audit log, and guardrails: never shrink a quota to or below what someone already stores without explicit consent, and never write against state that could not be read. With `NUNO_RECONCILE_INTERVAL` set, a new directory user gets their ceiling within one cycle, no click needed.
-- [x] Admin UI: list users, usage bars, edit budget, trigger reconcile. A person the policy allocates for but who has no account yet is shown as **quota pending** rather than hidden.
+- [x] Admin UI: list users, usage bars, edit budget, trigger reconcile.
 - [x] A JSON usage endpoint for a shared homepage dashboard, so people see what is left without opening two admin panels.
 - [x] Webhook notification when a reconcile fails or is blocked, with an optional bearer token for an authenticated endpoint such as ntfy.
 
@@ -117,7 +117,7 @@ One container next to the services it manages. See [`docs/deployment.md`](docs/d
 ```yaml
 services:
   nuno:
-    image: ghcr.io/marcodellemarche/nuno:0.5.1
+    image: ghcr.io/marcodellemarche/nuno:0.5.2
     env_file: .env
     volumes:
       - ./data:/data          # SQLite DB and config

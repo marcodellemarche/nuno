@@ -54,7 +54,7 @@ Generate the admin key with `openssl rand -hex 32`, or issue one from the UI, wh
 ```yaml
 services:
   nuno:
-    image: ghcr.io/marcodellemarche/nuno:0.5.1
+    image: ghcr.io/marcodellemarche/nuno:0.5.2
     container_name: nuno
     restart: unless-stopped
     env_file: .env
@@ -213,7 +213,7 @@ While `nuno serve` is running, a command cannot open the database: one process w
 
 ### Adding a person
 
-Create the person in the directory and put them in the group that maps to their tier. Nothing else. With `NUNO_RECONCILE_INTERVAL` set, Nuno picks them up on the next cycle and applies their ceiling to every service where they have an account; the account is created by the service on first login, and the quota is waiting for them. On the Quotas page a person with a policy ceiling but no account yet is shown with a **quota pending** flag rather than hidden, so a new person is never invisible before they first sign in.
+Create the person in the directory and put them in the group that maps to their tier. Nothing else. With `NUNO_RECONCILE_INTERVAL` set, Nuno picks them up on the next cycle and applies their ceiling to every service where they have an account; the account is created by the service on first login, and the quota is applied within one cycle of that. A person who has never logged in anywhere has no account to write to yet, so they appear on the Quotas page only once a service has created their account.
 
 What Nuno does not do is create the account: it never provisions on a provider (FR-8). It applies the ceiling the moment the account appears.
 

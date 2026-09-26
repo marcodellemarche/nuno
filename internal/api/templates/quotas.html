@@ -23,7 +23,6 @@
     <div class="card-head">
       <h3>{{.UID}}</h3>
       {{range .TierPills}}<span class="tier-pill">{{.}}</span>{{end}}
-      {{if .Pending}}<span class="flag" title="The policy gives this person a ceiling, but no account exists on the service yet. Nuno applies it as soon as the account appears (on first login).">quota pending</span>{{end}}
       <div class="totals">
         <span>{{.Used}} of {{.Budget}}</span>
         {{if .Partial}}<span class="flag" title="At least one provider did not answer, so these totals are partial">partial</span>{{end}}
@@ -87,7 +86,7 @@
       </tbody>
     </table>
     {{else}}
-    <p class="muted">{{if .Pending}}No account yet, but the policy gives this person a ceiling: it is applied when they first log in.{{else}}No linked account on any provider.{{end}}</p>
+    <p class="muted">No linked account on any provider.</p>
     {{if $.Editable}}
     <details class="reveal">
       <summary><span class="edit">{{template "icon-plus"}} add a ceiling for another service</span></summary>
