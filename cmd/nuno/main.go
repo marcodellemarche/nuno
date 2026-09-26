@@ -321,5 +321,5 @@ func buildNotifier(cfg *config.Config, log *slog.Logger) notify.Notifier {
 	if cfg.WebhookURL == "" {
 		return notify.Disabled{}
 	}
-	return notify.NewWebhook(cfg.WebhookURL, cfg.PublicURL, cfg.WebhookTimeout, log)
+	return notify.NewWebhook(cfg.WebhookURL, cfg.PublicURL, cfg.WebhookTimeout, log).WithToken(cfg.WebhookToken)
 }

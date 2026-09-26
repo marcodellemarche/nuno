@@ -250,6 +250,33 @@ func TestServiceAccountsAreHiddenUnlessAsked(t *testing.T) {
 	}
 }
 
+// A person the directory just reported, with a policy ceiling but no account
+// on any service yet, must be visible and flagged rather than hidden: they are
+// a customer whose account has simply not materialized on first login
+// (FR-38d).
+func TestANewPersonWithNoAccountYetIsShownAsPending(t *testing.T) {
+	tierID := int64(1)
+	s := populated()
+	s.accounts = nil
+	s.users = append(s.users, core.User{ID: 2, SourceUUID: "22222222", UID: "bob", Status: core.UserActive})
+	s.policy = core.Policy{
+		Tiers: map[int64]core.Tier{1: {
+			ID: 1, Name: "standard", Budget: core.MustBytes(100 << 30),
+			Allocations: []core.Allocation{{ProviderID: 10, Mode: core.ModeAbsolute, Value: 50 << 30}},
+		}},
+		DefaultTierID: &tierID,
+	}
+	mux := Routes(Options{Version: "test", Store: s, Actor: &fakeActor{}, Log: discard()})
+
+	body := pageBody(t, mux, "/")
+	if !strings.Contains(body, "<h3>bob</h3>") {
+		t.Error("a person the policy allocates for must not be hidden just because no account exists yet")
+	}
+	if !strings.Contains(body, "quota pending") {
+		t.Error("the pending ceiling must be flagged, not shown as an empty card")
+	}
+}
+
 // Behind a forward-auth proxy the admin password warning is noise: the
 // operator has already declared the proxy with NUNO_TRUSTED_PROXY.
 func TestTrustedProxySilencesTheAdminPasswordWarning(t *testing.T) {

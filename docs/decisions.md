@@ -8,6 +8,8 @@ ADR-0001 to ADR-0010 were written during the design freeze of 2026-09-14. A revi
 
 ADR-0025 to ADR-0027 were raised at the start of M1, when implementing the design surfaced three things it did not settle. Read this file from the bottom: a later entry always wins over an earlier one.
 
+ADR-0031 was raised after the first week of live use, when the stack surfaced three things a design reviewed on paper had missed: Nuno started before the services it reads, a new directory user stayed invisible until the next cycle, and nothing applied a new person's ceiling at all.
+
 ## ADR-0001: Tech stack
 
 **Status: Accepted (2026-09-14).**
@@ -664,3 +666,35 @@ Each editable value is a real `<form>` with a real `action` and `method`, postin
 - Forms carry a `return` field naming the page to come back to, which is what makes one action route serve five pages. Only a local path is honoured, so it cannot become an open redirect.
 - The toggle for guarded changes is **not** part of this: it is a real checkbox styled with CSS and a `:checked` sibling selector, because an on/off control needs no script.
 - If a page ever needs more than this, it is a new ADR, not a quiet dependency.
+
+## ADR-0031: Convergence at startup, and a new person gets their quota without a click
+
+**Status: Accepted (2026-09-26).** Raised after the first week of live use on the homelab. Extends [ADR-0018](#adr-0018-one-writer-the-cli-talks-to-the-server) and [ADR-0024](#adr-0024-a-person-who-has-never-logged-in-still-gets-their-quota), and settles the scheduled-reconcile question ADR-0027 left open for M3.
+
+**Context.** Three defects showed up only when the stack ran as a whole, not when Nuno ran alone.
+
+Nuno starts before the services it reads. The compose stack brings every container up at once, and `refreshLoop` ran exactly one cycle immediately and then waited a full interval. If LLDAP, Nextcloud or Immich were a second too slow, that first cycle failed and Nuno waited fifteen minutes for the next one, or until an operator restarted it. The logs from the first boot show both providers unreachable and the directory unreachable, each followed by a long silence. That is the reported "Nuno starts before the others and errors, I had to restart it".
+
+A new directory user was invisible until the next cycle, and even then partly hidden. Identity sync ran only on the fifteen-minute tick, so a person created in LLDAP did not appear until then; a restart forced the sync immediately, which is why restarting "fixed" it. Worse, the Quotas page hides anyone with no linked account and no override, which is exactly the shape of a person who exists in the directory but has not logged into any service yet. So even after the sync the new person was not shown.
+
+Nothing applied a new person's ceiling at all. The scheduled reconcile was off in the homelab, so the only way a quota was ever written was a human clicking Reconcile or running the command. A person who signed up got whatever default the service gave them: on Immich that is unlimited (the whole pool), on Nextcloud the instance default. This is precisely the problem Nuno exists to solve, left to manual intervention. ADR-0024 had already ruled that a person who has never logged in still gets their quota; the plumbing to deliver it unattended did not exist.
+
+**Options.**
+1. Document the ordering (a compose `depends_on` with health conditions) and keep the manual click. Nuno's own timer stays off.
+2. Retry at startup with backoff, sync identity on a short cadence, and turn the scheduled reconcile on with a webhook, so convergence is automatic.
+3. A one-shot "provision new accounts" step separate from the general reconcile.
+
+**Decision.** Option 2, in three parts.
+
+- **Startup convergence with backoff.** The refresh loop and the scheduled reconcile both run once at startup, and while a cycle is not clean they retry with a delay that doubles from two seconds to a minute. A service that is a second late is picked up immediately; a long outage is retried every minute rather than going silent or hammering. Compose ordering is a fine addition but is not the mechanism: it cannot help when a service restarts on its own.
+- **A shared gate, and a shorter identity cadence.** The refresh loop, the scheduled reconcile and a UI action all sync identity and observe, so they take one mutex and cannot recompute the snapshot at the same moment. The scheduled reconcile runs on `NUNO_RECONCILE_INTERVAL`, which also carries the identity sync, so a new person is picked up within one interval rather than fifteen minutes.
+- **The scheduled reconcile is on, with a webhook.** It applies the resolved ceiling for every linked account, so a new person's quota is correct before they first open the service. It still never consents to a risky change ([ADR-0009](#adr-0009-guardrail-against-shrinking-a-quota-below-current-usage), [ADR-0016](#adr-0016-safety-model-unknown-state-re-check-and-honest-partial-application), FR-39): a shrink below usage, or any change against unknown state, is refused and notified, and stays a human decision. It refuses to start without a webhook, unchanged from M3.
+
+The Quotas page change follows from the same principle: a person the policy allocates for, but who has no account on a service yet, is shown with a **quota pending** flag instead of being hidden. Hiding them was a rule about directory service accounts, which have no policy; it was never meant to hide a new customer.
+
+**Consequences.**
+- The webhook may need a bearer token, because the target stack's ntfy requires authentication to publish. `NUNO_WEBHOOK_TOKEN` is a `core.Secret`, sent as `Authorization: Bearer`, and never logged.
+- Automatic writes are now real on the homelab. The blast radius is bounded by the guardrails, which is what they were built for: the timer can set a ceiling, and it cannot lower one below current usage or touch an account it could not read.
+- `NUNO_RECONCILE_INTERVAL` is no longer "leave unset until you have watched a few reconciles by hand" for a stack that wants unattended provisioning. The deployment doc now says so, and the `.env.example` shows the shape including the token.
+- A cycle that fails a guardrail is not retried on the short backoff: retrying a refused change unattended cannot change the answer, so it waits a full interval. Only an unreadable provider or directory backs off fast.
+- This does not make Nuno create accounts. It never provisions on a provider (FR-8); it applies the ceiling the moment the service creates the account on first login, which is what ADR-0024 promised and this delivers.

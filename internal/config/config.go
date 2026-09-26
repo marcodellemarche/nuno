@@ -58,6 +58,10 @@ type Config struct {
 	// timer (FR-60, FR-62).
 	WebhookURL     string
 	WebhookTimeout time.Duration
+	// WebhookToken is sent as an Authorization: Bearer header, which is what
+	// an ntfy instance with auth enabled requires to publish. Empty means no
+	// header, for an endpoint that needs none.
+	WebhookToken core.Secret
 
 	// ReconcileInterval drives the scheduled reconcile. Zero disables it,
 	// which leaves Nuno reporting rather than controlling (FR-36).
@@ -173,6 +177,7 @@ func Load(env Env) (*Config, error) {
 	}
 
 	cfg.WebhookURL = env.get("NUNO_WEBHOOK_URL", "")
+	cfg.WebhookToken = core.Secret(env.get("NUNO_WEBHOOK_TOKEN", ""))
 	cfg.PublicURL = env.get("NUNO_PUBLIC_URL", "")
 	for _, d := range []struct {
 		key    string

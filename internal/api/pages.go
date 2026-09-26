@@ -36,6 +36,13 @@ type personView struct {
 	// those by default: they are not customers (FR-57).
 	Empty bool
 
+	// Pending is true when the policy allocates a ceiling for this person but
+	// no provider account carries it yet: a newly synced directory user whose
+	// account has not materialized on a service. It is shown even when Empty,
+	// flagged, so a fresh person is never invisible just because they have not
+	// logged in yet (FR-38d).
+	Pending bool
+
 	// Elsewhere are the services this person has no row for, which is what the
 	// ghost row at the bottom of the card offers.
 	Elsewhere []providerField
@@ -95,9 +102,11 @@ func quotasHandler(opts Options) http.HandlerFunc {
 			}
 			view := personFor(ctx, opts, entry, byUID[entry.User], providers, policy)
 			// A person with nothing to manage is hidden unless the admin asks
-			// for them, or is searching by name. The service accounts in the
-			// directory are exactly this shape and made the page noisy.
-			if view.Empty && !data.ShowAll && data.Query == "" {
+			// for them, is searching by name, or the policy gives them a ceiling
+			// that no account carries yet. The service accounts in the directory
+			// are the first shape and made the page noisy; a new person is the
+			// last and must never be hidden.
+			if view.Empty && !view.Pending && !data.ShowAll && data.Query == "" {
 				continue
 			}
 			data.People = append(data.People, view)
@@ -143,6 +152,13 @@ func personFor(ctx context.Context, opts Options, entry core.UsageUser, user cor
 		override, hasOverride := up.ProviderOverrides[provider.ID]
 		usageRow, linked := observed[provider.Name]
 		if !linked && !hasOverride {
+			// The policy allocates this provider for the person, but no account
+			// carries it yet: a pending ceiling, not an empty one. Surfacing it
+			// keeps a freshly synced person visible before their first login
+			// (FR-38d).
+			if resolution.Present {
+				view.Pending = true
+			}
 			view.Elsewhere = append(view.Elsewhere, providerField{ID: provider.ID, Name: provider.Name, Type: provider.Type})
 			continue
 		}

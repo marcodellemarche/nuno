@@ -18,26 +18,30 @@ import (
 // serverActor performs the mutations the UI offers. It holds the run lock, so
 // two clicks cannot start two reconciles against one state: the process-level
 // lock keeps other processes out, and this keeps this process honest.
+//
+// gate is the same lock the scheduled loops take, so a click and a timer
+// cannot sync identity and observe at the same moment either.
 type serverActor struct {
 	app    *app
 	engine *reconcile.Engine
-	mu     sync.Mutex
+	gate   *sync.Mutex
 }
 
-func newActor(a *app) *serverActor {
+func newActor(a *app, gate *sync.Mutex) *serverActor {
 	return &serverActor{
 		app:    a,
 		engine: reconcile.New(a.db, a.log).WithNotifier(a.notifier, a.cfg.PublicURL),
+		gate:   gate,
 	}
 }
 
 var errRunInProgress = errors.New("a run is already in progress: wait for it to finish")
 
 func (s *serverActor) Reconcile(ctx context.Context, consentShrink bool, filter reconcile.PlanFilter) (reconcile.ApplyReport, error) {
-	if !s.mu.TryLock() {
+	if !s.gate.TryLock() {
 		return reconcile.ApplyReport{}, errRunInProgress
 	}
-	defer s.mu.Unlock()
+	defer s.gate.Unlock()
 
 	if _, err := s.engine.SyncIdentity(ctx, s.app.directory); err != nil {
 		s.app.log.Error("identity sync failed, continuing with what is known", "error", err)
@@ -68,10 +72,10 @@ func (s *serverActor) Reconcile(ctx context.Context, consentShrink bool, filter 
 }
 
 func (s *serverActor) Observe(ctx context.Context) error {
-	if !s.mu.TryLock() {
+	if !s.gate.TryLock() {
 		return errRunInProgress
 	}
-	defer s.mu.Unlock()
+	defer s.gate.Unlock()
 
 	if _, err := s.engine.SyncIdentity(ctx, s.app.directory); err != nil {
 		s.app.log.Error("identity sync failed", "error", err)

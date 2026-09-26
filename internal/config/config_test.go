@@ -175,6 +175,22 @@ func TestEveryErrorIsReportedAtOnce(t *testing.T) {
 	}
 }
 
+func TestWebhookTokenIsLoadedAsASecret(t *testing.T) {
+	cfg, err := Load(Env{
+		"NUNO_WEBHOOK_URL":   "https://ntfy.example.org/nuno",
+		"NUNO_WEBHOOK_TOKEN": "tok-abc",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WebhookURL != "https://ntfy.example.org/nuno" {
+		t.Errorf("url = %q", cfg.WebhookURL)
+	}
+	if cfg.WebhookToken.Reveal() != "tok-abc" {
+		t.Errorf("token = %q", cfg.WebhookToken.Reveal())
+	}
+}
+
 func TestPrintingTheConfigCannotLeakASecret(t *testing.T) {
 	cfg, err := Load(Env{
 		"NUNO_ADMIN_KEY":               "admin-key-secret",
@@ -182,13 +198,14 @@ func TestPrintingTheConfigCannotLeakASecret(t *testing.T) {
 		"NUNO_PROVIDER_CLOUD_TYPE":     "nextcloud",
 		"NUNO_PROVIDER_CLOUD_URL":      "https://cloud.example.org",
 		"NUNO_PROVIDER_CLOUD_PASSWORD": "provider-password-secret",
+		"NUNO_WEBHOOK_TOKEN":           "webhook-token-secret",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, format := range []string{"%v", "%+v", "%#v"} {
 		dump := fmt.Sprintf(format, cfg)
-		for _, secret := range []string{"admin-key-secret", "admin-password-secret", "provider-password-secret"} {
+		for _, secret := range []string{"admin-key-secret", "admin-password-secret", "provider-password-secret", "webhook-token-secret"} {
 			if strings.Contains(dump, secret) {
 				t.Errorf("fmt %s leaked %s", format, secret)
 			}

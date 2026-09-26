@@ -68,8 +68,12 @@ services:
       NUNO_REFRESH_INTERVAL: 15m
       # Leave this unset until you have watched a few reconciles by hand.
       # With it set, Nuno refuses to start the timer unless a webhook is
-      # configured too.
-      # NUNO_RECONCILE_INTERVAL: 1h
+      # configured too. It also runs once at startup and retries with backoff
+      # while a service is not up yet, so a stack brought up all at once does
+      # not need Nuno restarted once the others are ready.
+      # NUNO_RECONCILE_INTERVAL: 5m
+      # NUNO_WEBHOOK_URL: https://ntfy.example.org/nuno
+      # NUNO_WEBHOOK_TOKEN: the ntfy access token, sent as Authorization: Bearer
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
@@ -206,6 +210,14 @@ nuno runs                       # recent runs and the changes they made
 Exit codes are a contract: `0` clean, `1` error, `2` applied but incomplete (guarded, throttled, or a non-empty dry run), `3` configuration or startup failure.
 
 While `nuno serve` is running, a command cannot open the database: one process writes at a time, and the HTTP client mode that would let both coexist is not written yet. Stop the server, or use the UI, which does the same things.
+
+### Adding a person
+
+Create the person in the directory and put them in the group that maps to their tier. Nothing else. With `NUNO_RECONCILE_INTERVAL` set, Nuno picks them up on the next cycle and applies their ceiling to every service where they have an account; the account is created by the service on first login, and the quota is waiting for them. On the Quotas page a person with a policy ceiling but no account yet is shown with a **quota pending** flag rather than hidden, so a new person is never invisible before they first sign in.
+
+What Nuno does not do is create the account: it never provisions on a provider (FR-8). It applies the ceiling the moment the account appears.
+
+If nothing is applied within a couple of minutes, check `nuno runs` for a guarded change (a shrink below current usage is refused without consent, and the webhook is notified), and confirm the provider is not degraded (`nuno providers health`, `nuno doctor`).
 
 ## Adopting a stack that already has quotas
 

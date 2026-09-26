@@ -60,6 +60,7 @@ type Notifier interface {
 type Webhook struct {
 	url    string
 	host   string
+	token  core.Secret
 	client *http.Client
 	log    *slog.Logger
 }
@@ -69,6 +70,14 @@ func NewWebhook(url, host string, timeout time.Duration, log *slog.Logger) *Webh
 		timeout = 10 * time.Second
 	}
 	return &Webhook{url: url, host: host, client: &http.Client{Timeout: timeout}, log: log}
+}
+
+// WithToken sends an Authorization: Bearer header, which is what an ntfy
+// instance with auth enabled requires to publish. It is a Secret so the token
+// cannot reach a log through a struct dump.
+func (w *Webhook) WithToken(token core.Secret) *Webhook {
+	w.token = token
+	return w
 }
 
 func (w *Webhook) Configured() bool { return w != nil && w.url != "" }
@@ -92,6 +101,9 @@ func (w *Webhook) Notify(ctx context.Context, event Event) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "nuno")
+	if !w.token.Empty() {
+		req.Header.Set("Authorization", "Bearer "+w.token.Reveal())
+	}
 
 	resp, err := w.client.Do(req)
 	if err != nil {

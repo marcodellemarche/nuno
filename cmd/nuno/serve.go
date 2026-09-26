@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -26,13 +27,19 @@ func serve(ctx context.Context, a *app) int {
 		return code
 	}
 
+	// The refresh loop, the scheduled reconcile and a UI action all sync
+	// identity and observe, so they share one gate: two of them must not
+	// recompute the identity snapshot and the observed accounts at the same
+	// moment.
+	var gate sync.Mutex
+
 	srv := &http.Server{
 		Addr: a.cfg.Addr,
 		Handler: api.Routes(api.Options{
 			Version:         version,
 			DB:              a.db.R,
 			Store:           a.db,
-			Actor:           newActor(a),
+			Actor:           newActor(a, &gate),
 			Log:             a.log,
 			AdminPassword:   a.cfg.AdminPassword,
 			ProxySecret:     a.cfg.ProxySecret,
@@ -50,13 +57,13 @@ func serve(ctx context.Context, a *app) int {
 	refreshDone := make(chan struct{})
 	go func() {
 		defer close(refreshDone)
-		refreshLoop(ctx, a)
+		refreshLoop(ctx, a, &gate)
 	}()
 
 	reconcileDone := make(chan struct{})
 	go func() {
 		defer close(reconcileDone)
-		reconcileLoop(ctx, a)
+		reconcileLoop(ctx, a, &gate)
 	}()
 
 	errc := make(chan error, 1)
@@ -119,41 +126,83 @@ func bootstrapAdminKey(ctx context.Context, a *app) int {
 	return ExitClean
 }
 
+// Startup backoff bounds. Nuno starts before the services it reads when the
+// whole stack is brought up together, so the first cycle must retry rather
+// than wait a full interval for a service that was a second too slow. The
+// delay doubles from the minimum and stops at the maximum, so a long outage
+// is retried every minute instead of hammering or going silent.
+const (
+	startupBackoffMin = 2 * time.Second
+	startupBackoffMax = time.Minute
+)
+
+// waitOrDone sleeps for d, returning false if the context ends first.
+func waitOrDone(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return true
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
 // refreshLoop observes on a timer. It runs once at startup so the page is not
-// empty for the first interval.
-func refreshLoop(ctx context.Context, a *app) {
+// empty for the first interval, and it retries with backoff while the cycle
+// is not clean, so a service that is not up yet is picked up as soon as it
+// appears (FR-48).
+func refreshLoop(ctx context.Context, a *app, gate *sync.Mutex) {
 	interval := a.cfg.RefreshInterval
 	if interval <= 0 {
 		interval = 15 * time.Minute
 	}
 	engine := reconcile.New(a.db, a.log)
 
-	refresh := func() {
-		if _, err := engine.SyncIdentity(ctx, a.directory); err != nil {
-			a.log.Error("scheduled identity sync failed", "error", err)
-		}
-		report, err := engine.Observe(ctx, a.instances)
-		if err != nil {
-			a.log.Error("scheduled observe failed", "error", err)
-			return
-		}
-		observed, linked, issues := report.Totals()
-		a.log.Info("usage refreshed",
-			"accounts", observed, "linked", linked, "issues", issues,
-			"failed_providers", len(report.Failed()))
-	}
-
-	refresh()
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	backoff := startupBackoffMin
 	for {
-		select {
-		case <-ctx.Done():
+		ok := refreshOnce(ctx, a, engine, gate)
+		if ok {
+			backoff = startupBackoffMin
+		} else {
+			a.log.Info("usage refresh will be retried", "in", backoff.String())
+		}
+		next := interval
+		if !ok {
+			next = backoff
+			backoff = min(backoff*2, startupBackoffMax)
+		}
+		if !waitOrDone(ctx, next) {
 			return
-		case <-ticker.C:
-			refresh()
 		}
 	}
+}
+
+// refreshOnce syncs identity and observes every provider. It reports whether
+// the cycle was clean, which is what decides the next delay: a directory or a
+// provider that could not be read is retried soon, not in fifteen minutes.
+func refreshOnce(ctx context.Context, a *app, engine *reconcile.Engine, gate *sync.Mutex) bool {
+	gate.Lock()
+	defer gate.Unlock()
+
+	clean := true
+	if _, err := engine.SyncIdentity(ctx, a.directory); err != nil {
+		a.log.Error("scheduled identity sync failed", "error", err)
+		clean = false
+	}
+	report, err := engine.Observe(ctx, a.instances)
+	if err != nil {
+		a.log.Error("scheduled observe failed", "error", err)
+		return false
+	}
+	observed, linked, issues := report.Totals()
+	a.log.Info("usage refreshed",
+		"accounts", observed, "linked", linked, "issues", issues,
+		"failed_providers", len(report.Failed()))
+	return clean && report.OK()
 }
 
 func signalContext() (context.Context, context.CancelFunc) {
@@ -168,7 +217,7 @@ func signalContext() (context.Context, context.CancelFunc) {
 // unattended (FR-39). And it refuses to start without a webhook, because a
 // timer that writes quotas and cannot tell anybody when it is blocked is
 // worse than no timer at all.
-func reconcileLoop(ctx context.Context, a *app) {
+func reconcileLoop(ctx context.Context, a *app, gate *sync.Mutex) {
 	if a.cfg.ReconcileInterval <= 0 {
 		a.log.Info("scheduled reconcile is off, so Nuno reports rather than controls",
 			"fix", "set NUNO_RECONCILE_INTERVAL")
@@ -183,38 +232,62 @@ func reconcileLoop(ctx context.Context, a *app) {
 	engine := reconcile.New(a.db, a.log).WithNotifier(a.notifier, a.cfg.PublicURL)
 	a.log.Info("scheduled reconcile is on", "interval", a.cfg.ReconcileInterval)
 
-	ticker := time.NewTicker(a.cfg.ReconcileInterval)
-	defer ticker.Stop()
+	// It runs once at startup as well as on the timer, so an account that
+	// appeared since the last run gets its quota without waiting a full
+	// interval. This is what makes a new person's ceiling correct before they
+	// first open the service (FR-36, FR-38d).
+	backoff := startupBackoffMin
 	for {
-		select {
-		case <-ctx.Done():
+		ok := runScheduledReconcile(ctx, a, engine, gate)
+		if ok {
+			backoff = startupBackoffMin
+		} else {
+			a.log.Info("scheduled reconcile will be retried", "in", backoff.String())
+		}
+		next := a.cfg.ReconcileInterval
+		if !ok {
+			next = backoff
+			backoff = min(backoff*2, startupBackoffMax)
+		}
+		if !waitOrDone(ctx, next) {
 			return
-		case <-ticker.C:
-			runScheduledReconcile(ctx, a, engine)
 		}
 	}
 }
 
-func runScheduledReconcile(ctx context.Context, a *app, engine *reconcile.Engine) {
+// runScheduledReconcile syncs, observes, plans and applies one cycle. It
+// reports whether the cycle was clean enough to wait a full interval for the
+// next one: a provider that could not be read is retried with backoff, while
+// a change a guardrail refused is not, because retrying it unattended cannot
+// change the answer (FR-39).
+func runScheduledReconcile(ctx context.Context, a *app, engine *reconcile.Engine, gate *sync.Mutex) bool {
+	gate.Lock()
+	defer gate.Unlock()
+
+	clean := true
 	if _, err := engine.SyncIdentity(ctx, a.directory); err != nil {
 		a.log.Error("scheduled identity sync failed", "error", err)
+		clean = false
 	}
 	observation, err := engine.Observe(ctx, a.instances)
 	if err != nil {
 		a.log.Error("scheduled observe failed", "error", err)
-		return
+		return false
+	}
+	if !observation.OK() {
+		clean = false
 	}
 
 	computedAt := time.Now()
 	result, err := engine.Plan(ctx, a.instances, reconcile.PlanFilter{})
 	if err != nil {
 		a.log.Error("scheduled plan failed", "error", err)
-		return
+		return false
 	}
 	if result.Plan.Empty() {
 		a.log.Info("scheduled reconcile had nothing to do",
 			"considered", result.Considered, "providers_failed", len(observation.Failed()))
-		return
+		return clean
 	}
 
 	report, err := engine.Apply(ctx, a.instances, result.Plan, reconcile.ApplyOptions{
@@ -225,10 +298,14 @@ func runScheduledReconcile(ctx context.Context, a *app, engine *reconcile.Engine
 	})
 	if err != nil {
 		a.log.Error("scheduled apply failed", "error", err)
-		return
+		return false
 	}
 	a.log.Info("scheduled reconcile finished",
 		"applied", report.Applied, "failed", report.Failed,
 		"guarded", report.Guarded, "unknown_state", report.Unknown,
 		"moved", report.Moved, "throttled", report.Throttled, "run", report.RunID)
+	if report.Failed > 0 || len(report.Errors) > 0 {
+		clean = false
+	}
+	return clean
 }

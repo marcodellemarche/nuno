@@ -49,6 +49,36 @@ func TestWebhookPostsTheEvent(t *testing.T) {
 	}
 }
 
+// An ntfy instance with auth enabled refuses a publish without a bearer
+// token, so the webhook carries one when configured and sends no header
+// otherwise.
+func TestWebhookSendsTheBearerTokenWhenConfigured(t *testing.T) {
+	var got string
+	var present bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("Authorization")
+		_, present = r.Header["Authorization"]
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	withToken := NewWebhook(srv.URL, "", time.Second, discard()).WithToken("tok-123")
+	if err := withToken.Notify(context.Background(), Event{Kind: KindFailed}); err != nil {
+		t.Fatal(err)
+	}
+	if got != "Bearer tok-123" {
+		t.Errorf("Authorization = %q, want %q", got, "Bearer tok-123")
+	}
+
+	without := NewWebhook(srv.URL, "", time.Second, discard())
+	if err := without.Notify(context.Background(), Event{Kind: KindFailed}); err != nil {
+		t.Fatal(err)
+	}
+	if present {
+		t.Errorf("no token configured, so no Authorization header must be sent, got %q", got)
+	}
+}
+
 func TestWebhookReportsAFailureWithoutLeakingTheURL(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "nope", http.StatusInternalServerError)

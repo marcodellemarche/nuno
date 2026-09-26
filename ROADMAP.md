@@ -79,6 +79,8 @@ Against the captured fixtures, a `standard` tier of 25 percent Nextcloud and 75 
 
 Done when changing a tier in the UI fixes both services, the second run is empty, a shrink is refused without consent, an unknown-state change is refused with consent, and the timer has run for a week without surprising anyone.
 
+On 2026-09-26 the first week of live use found three gaps that only show up when the whole stack runs, not when Nuno runs alone: Nuno started before the services it reads and then waited a full interval instead of retrying, a new directory user was invisible until the next cycle (and hidden by the page even then, if they had no account yet), and nothing applied a new person's ceiling at all because the timer was off. Fixed in [ADR-0031](docs/decisions.md#adr-0031-convergence-at-startup-and-a-new-person-gets-their-quota-without-a-click): startup convergence with backoff, a shared gate for the two loops and the UI, the scheduled reconcile on with a webhook, and a **quota pending** flag instead of hiding a person the policy allocates for but who has no account yet. The scheduled reconcile now needs `NUNO_WEBHOOK_URL` and, for ntfy with auth, `NUNO_WEBHOOK_TOKEN`.
+
 ## M4: publish
 
 - [x] Contract tests as the CI gate; integration environment as a manual target plus a weekly job. The images carry explicit versions and still need pinning to digests before anyone relies on the weekly run
