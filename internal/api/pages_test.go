@@ -250,15 +250,44 @@ func TestServiceAccountsAreHiddenUnlessAsked(t *testing.T) {
 	}
 }
 
-// A person the directory just reported, with a policy ceiling but no account
-// on any service yet, must be visible and flagged rather than hidden: they are
-// a customer whose account has simply not materialized on first login
-// (FR-38d).
+// A person the directory just reported and an admin put in a tier group, with
+// no account on any service yet, must be visible and flagged rather than
+// hidden: they are a customer whose account has simply not materialized on
+// first login (FR-38d).
 func TestANewPersonWithNoAccountYetIsShownAsPending(t *testing.T) {
 	tierID := int64(1)
 	s := populated()
 	s.accounts = nil
-	s.users = append(s.users, core.User{ID: 2, SourceUUID: "22222222", UID: "bob", Status: core.UserActive})
+	s.users = append(s.users, core.User{
+		ID: 2, SourceUUID: "22222222", UID: "bob", Status: core.UserActive,
+		GroupUUIDs: []string{"grp-staff"},
+	})
+	s.policy = core.Policy{
+		Tiers: map[int64]core.Tier{1: {
+			ID: 1, Name: "standard", Budget: core.MustBytes(100 << 30),
+			Allocations: []core.Allocation{{ProviderID: 10, Mode: core.ModeAbsolute, Value: 50 << 30}},
+		}},
+		GroupTiers:    map[string]int64{"grp-staff": 1},
+		DefaultTierID: &tierID,
+	}
+	mux := Routes(Options{Version: "test", Store: s, Actor: &fakeActor{}, Log: discard()})
+
+	body := pageBody(t, mux, "/")
+	if !strings.Contains(body, "<h3>bob</h3>") {
+		t.Error("a person with an explicit tier must not be hidden just because no account exists yet")
+	}
+	if !strings.Contains(body, "quota pending") {
+		t.Error("the pending ceiling must be flagged, not shown as an empty card")
+	}
+}
+
+// The default tier allocates to every directory entry, so it must not be what
+// makes an empty person visible: that would resurface the service accounts the
+// page hides on purpose (FR-57).
+func TestADefaultTierAloneDoesNotResurfaceServiceAccounts(t *testing.T) {
+	tierID := int64(1)
+	s := populated()
+	s.accounts = nil
 	s.policy = core.Policy{
 		Tiers: map[int64]core.Tier{1: {
 			ID: 1, Name: "standard", Budget: core.MustBytes(100 << 30),
@@ -268,12 +297,8 @@ func TestANewPersonWithNoAccountYetIsShownAsPending(t *testing.T) {
 	}
 	mux := Routes(Options{Version: "test", Store: s, Actor: &fakeActor{}, Log: discard()})
 
-	body := pageBody(t, mux, "/")
-	if !strings.Contains(body, "<h3>bob</h3>") {
-		t.Error("a person the policy allocates for must not be hidden just because no account exists yet")
-	}
-	if !strings.Contains(body, "quota pending") {
-		t.Error("the pending ceiling must be flagged, not shown as an empty card")
+	if body := pageBody(t, mux, "/"); strings.Contains(body, "<h3>alice</h3>") {
+		t.Error("the default tier alone must not make an empty account visible")
 	}
 }
 

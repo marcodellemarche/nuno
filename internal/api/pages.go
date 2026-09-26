@@ -143,22 +143,26 @@ func personFor(ctx context.Context, opts Options, entry core.UsageUser, user cor
 		observed[p.Name] = p
 	}
 
+	// A person with no account anywhere is only worth surfacing if the policy
+	// gives them a ceiling by an explicit decision (a group tier or an
+	// override), not the default tier that every directory entry falls back
+	// to. Otherwise the service accounts in the directory would all reappear,
+	// which is exactly the noise the page hides (FR-57). A new person the
+	// admin put in a tier group is the case this is for (FR-38d).
+	explicitEntitlement := false
+
 	for _, provider := range providers {
 		resolution := core.Resolve(user, provider.ID, policy, up)
 		if resolution.TierName != "" && !slices.Contains(view.TierPills, resolution.TierName) {
 			view.TierPills = append(view.TierPills, resolution.TierName)
 		}
+		if resolution.Present && resolution.Rule != core.RuleDefaultTier {
+			explicitEntitlement = true
+		}
 
 		override, hasOverride := up.ProviderOverrides[provider.ID]
 		usageRow, linked := observed[provider.Name]
 		if !linked && !hasOverride {
-			// The policy allocates this provider for the person, but no account
-			// carries it yet: a pending ceiling, not an empty one. Surfacing it
-			// keeps a freshly synced person visible before their first login
-			// (FR-38d).
-			if resolution.Present {
-				view.Pending = true
-			}
 			view.Elsewhere = append(view.Elsewhere, providerField{ID: provider.ID, Name: provider.Name, Type: provider.Type})
 			continue
 		}
@@ -195,6 +199,7 @@ func personFor(ctx context.Context, opts Options, entry core.UsageUser, user cor
 		view.Rows = append(view.Rows, row)
 	}
 	view.Empty = len(view.Rows) == 0
+	view.Pending = view.Empty && explicitEntitlement
 	return view
 }
 
