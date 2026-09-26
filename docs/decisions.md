@@ -6,7 +6,7 @@ Format: context, options, decision, consequences.
 
 ADR-0001 to ADR-0010 were written during the design freeze of 2026-09-14. A review on 2026-09-15, checking the design against provider source code and against the stack it will actually run on, found that several of them rested on assumptions that turned out to be false. ADR-0011 to ADR-0024 supersede or extend them, the last five of those written against responses captured from the live stack. The originals are kept because the reasoning that was wrong is worth reading next to the reasoning that replaced it.
 
-ADR-0025 to ADR-0027 were raised at the start of M1, when implementing the design surfaced three things it did not settle. Read this file from the bottom: a later entry always wins over an earlier one.
+ADR-0025 to ADR-0028 were raised at the start of M1, when implementing the design surfaced things it did not settle. ADR-0029 and ADR-0030 came with the per-person page and the admin panel rework. Read this file from the bottom: a later entry always wins over an earlier one.
 
 ADR-0031 was raised after the first week of live use, when the stack surfaced three things a design reviewed on paper had missed: Nuno started before the services it reads, a new directory user stayed invisible until the next cycle, and nothing applied a new person's ceiling at all.
 

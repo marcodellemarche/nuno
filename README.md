@@ -55,18 +55,12 @@ It connects to an identity provider (LLDAP or any LDAP directory), reads and wri
 | Account link | The mapping between a person and their account on a provider. Nuno never writes to an account it has not linked. |
 | Reconcile | Compute desired vs observed and apply the difference. |
 
-Two rules surprise every admin on day one, so they are written down here
-rather than on the page:
+Two rules surprise every admin on day one, so they are written down here rather than on the page:
 
-- **Absent is not zero.** A tier with no allocation for a service says nothing
-  about it: Nuno emits no change and the provider keeps what it has.
-- **The most generous ceiling wins, per service.** Resolution takes the highest
-  resolved ceiling across the tiers somebody is entitled to, so adding them to
-  a stricter tier does not restrict them. Demoting means removing the generous
-  group.
+- **Absent is not zero.** A tier with no allocation for a service says nothing about it: Nuno emits no change and the provider keeps what it has.
+- **The most generous ceiling wins, per service.** Resolution takes the highest resolved ceiling across the tiers somebody is entitled to, so adding them to a stricter tier does not restrict them. Demoting means removing the generous group.
 
-The admin UI edits ceilings in GiB, with the unit outside the field. The API
-and the CLI also accept a percentage of the tier's budget, and `unlimited`.
+The admin UI edits ceilings in GiB, with the unit outside the field. The API and the CLI also accept a percentage of the tier's budget, and `unlimited`.
 
 ## Features
 
@@ -135,7 +129,7 @@ Nuno needs credentials that can actually write. On Nextcloud an app password is 
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md). Issues and pull requests are welcome once the design stabilizes.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md). Issues and pull requests are welcome.
 
 ## Known to work with
 

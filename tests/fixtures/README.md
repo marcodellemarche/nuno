@@ -13,4 +13,4 @@ Identifiers are anonymized: real emails, display names and UUIDs were replaced w
 | `immich-server-statistics.json` | The live per-user usage aggregate, `usageByUser[].usage`, which is the authoritative source for `Account.Used`. Its `userId` joins to `immich-admin-users.json`. |
 | `immich-nightly-tasks.json` | Context: `syncQuotaUsage` was enabled when the other two were captured, which is why the cached counter was close to the aggregate. |
 
-Missing, and still to be captured or written by hand: a quota object serialized as `[]`, a user who has never logged in (`firstLoginTimestamp` of 0), a 429 from the write rate limit, any Immich write response, and an LDAP search against LLDAP showing that `memberOf` is absent from the wildcard attribute set.
+A quota object serialized as `[]`, a user who has never logged in (`firstLoginTimestamp` of 0) and a 429 from the write rate limit are not captured: the adapter tests write them by hand. Still missing: any Immich write response, and an LDAP search against LLDAP showing that `memberOf` is absent from the wildcard attribute set.

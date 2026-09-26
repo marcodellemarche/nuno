@@ -1,6 +1,6 @@
 # Roadmap
 
-Milestones are intentionally small. Each one ends with something runnable and demonstrable, so an agent or a human can iterate without a big-bang rewrite.
+Milestones are intentionally small. Each one ends with something runnable and demonstrable, so the work can iterate without a big-bang rewrite.
 
 ## M0: design freeze (done, 2026-09-15)
 
@@ -42,7 +42,7 @@ Starting M1 surfaced three things the design had not settled, so they were decid
 - [x] Identity sync from LLDAP: users and groups keyed on `entryuuid` (FR-1, FR-2, FR-9a)
 - [x] Account linking: match keys including the OIDC subject, manual links, revalidation, unmanaged and orphan detection (FR-3, FR-6, FR-7, FR-8, FR-8a, FR-9, FR-9b)
 - [x] Competing-writer detection, degrading the provider rather than blocking reads (FR-75), for the two settings OCS exposes
-- [x] The write probe, run after linking against a linked account, on both providers (FR-76, ADR-0025). Still never exercised against the live Immich, only against recorded and fake responses
+- [x] The write probe, run after linking against a linked account, on both providers (FR-76, ADR-0025). Exercised against the live stack on 2026-09-15, see M4
 - [x] `nuno doctor`: every precondition checked, every failure paired with the command that fixes it, and `--fix` emitting them as a script (FR-76, ADR-0027)
 - [x] Version detection and out-of-range warning (NFR-12)
 - [x] Scheduled read-only usage refresh (FR-48)
@@ -51,7 +51,7 @@ Starting M1 surfaced three things the design had not settled, so they were decid
 - [x] CLI: `nuno providers health`, `nuno observe`, `nuno usage`, `nuno accounts`, `nuno users`, `nuno link`, `nuno unlink` (FR-70a), all offline, taking an exclusive lock
 - [ ] The client mode that lets a command run against a live server (FR-74). Until it lands, a command and a server cannot run at once: the second one refuses
 
-Precondition, not code: the target Nextcloud must move its default from `oidc_login_default_quota` to `files/default_quota` first, and it has not yet (`tests/fixtures/nextcloud-write-probe.json` records it set to `25 GB`). Nuno cannot do this itself (it is a system config, reachable only through `occ`, and reaching `occ` would mean root on the host: see [ADR-0023](docs/decisions.md#adr-0023-nuno-diagnoses-it-does-not-reconfigure-the-services-it-manages)), and it cannot even read it, so `nuno doctor --fix` emits a script that checks and moves it. FR-75's degradation gate covers the two `user_ldap` settings, which OCS does expose: see [ADR-0027](docs/decisions.md#adr-0027-a-competing-writer-nuno-cannot-see).
+Precondition, not code: the target Nextcloud must move its default from `oidc_login_default_quota` to `files/default_quota` first. When M1 started it had not (`tests/fixtures/nextcloud-write-probe.json` records it set to `25 GB`). Nuno cannot do this itself (it is a system config, reachable only through `occ`, and reaching `occ` would mean root on the host: see [ADR-0023](docs/decisions.md#adr-0023-nuno-diagnoses-it-does-not-reconfigure-the-services-it-manages)), and it cannot even read it, so `nuno doctor --fix` emits a script that checks and moves it. FR-75's degradation gate covers the two `user_ldap` settings, which OCS does expose: see [ADR-0027](docs/decisions.md#adr-0027-a-competing-writer-nuno-cannot-see).
 
 Done when the aggregate page shows both services for both people, a Homepage `customapi` widget reads `/api/v1/usage` (proving it can send the bearer header, which is currently assumed), and every provider account is either linked or listed as unmanaged. This milestone is used daily from the day it lands.
 
@@ -90,6 +90,15 @@ On 2026-09-26 the first week of live use found three gaps that only show up when
 Done when tagged `v0.1.0`, with a published image, used by our own homelab.
 
 On 2026-09-15 it was exercised against a live stack (Nextcloud 34.0.4, Immich v3.2.0, LLDAP v0.6.3) rather than only against fixtures: `doctor`, `observe`, `accounts`, `usage` and `plan`, plus the write probe on **both** providers, which is a real no-op write. That covers the read path and the Immich write path, which the roadmap previously listed as untested. What remains: the automated integration suite (`make integration`, the weekly job) has still not been run, so its first green run is still ahead, and the integration images still need pinning to digests. The module path is confirmed: the repository is `github.com/marcodellemarche/nuno`.
+
+## After v0.1
+
+Releases since `v0.1.0`, driven by daily use rather than by a milestone:
+
+- `v0.2.0`: a readable summary and a per-service aggregate in the usage endpoint, for shared dashboards.
+- `v0.3.x`: a per-person `/me` page behind forward auth, served under the dashboard origin ([ADR-0029](docs/decisions.md#adr-0029-the-per-person-page-trusts-the-proxy-not-a-token)).
+- `v0.4.0`: the admin panel reworked for a phone, edits ceilings in GiB in place, and sits behind a proxy secret ([ADR-0030](docs/decisions.md#adr-0030-a-small-amount-of-javascript-for-editing-a-value-in-place)).
+- `v0.5.x`: startup convergence, and a new directory user gets their ceiling on the schedule without a restart or a click ([ADR-0031](docs/decisions.md#adr-0031-convergence-at-startup-and-a-new-person-gets-their-quota-without-a-click)).
 
 ## Post-v0.1 candidates
 

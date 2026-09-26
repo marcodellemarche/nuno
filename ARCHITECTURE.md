@@ -392,7 +392,7 @@ Four properties get a dedicated test each, because they are the ones that hurt w
 
 Fixtures must include the shapes that break naive decoding, all of them real responses: a `quota` field serialized as `[]`, a quota of `-3` and of `"none"`, an incomplete quota object missing `total` or `relative`, a complete quota object with `firstLoginTimestamp` of 0 (known and zero, not unknown), and a 429. The OCS error body returned with HTTP 200 is not among them: on `/ocs/v2.php` the status and `ocs.meta.statuscode` agree, and [ADR-0021](docs/decisions.md#adr-0021-corrections-from-the-captured-responses) dropped it as a requirement on this path.
 
-`tests/fixtures/` already holds responses captured from a live Nextcloud 34.0.4 and Immich v3.2.0 on 2026-09-15, including the 403 write probe and both sides of the lossy round trip. The degraded shapes are not among them and still need writing.
+`tests/fixtures/` already holds responses captured from a live Nextcloud 34.0.4 and Immich v3.2.0 on 2026-09-15, including the 403 write probe and both sides of the lossy round trip. The degraded shapes are not among them: the adapter tests write them by hand (`[]`, a never-logged-in account, a 429).
 
 ## 11. Extending Nuno with a new provider
 
