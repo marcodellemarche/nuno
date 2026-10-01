@@ -3,6 +3,7 @@
 package core
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -157,6 +158,19 @@ func TestPrecedence(t *testing.T) {
 	got := Resolve(stranger, nextcloudID, policy, UserPolicy{})
 	if got.Rule != RuleDefaultTier || !got.Ceiling.Equal(MustBytes(1<<30)) {
 		t.Errorf("stranger = %+v, want the default tier", got)
+	}
+}
+
+func TestTierNamesIgnoreProviderOverrides(t *testing.T) {
+	policy := Policy{
+		Tiers:      map[int64]Tier{1: tier(1, "admin", MustBytes(10<<30), alloc(nextcloudID, ModeAbsolute, 10<<30))},
+		GroupTiers: map[string]int64{"g": 1},
+	}
+	user := User{ID: 1, UID: "alice", GroupUUIDs: []string{"g"}}
+	up := UserPolicy{ProviderOverrides: map[int64]Quota{nextcloudID: MustBytes(99 << 30), immichID: MustBytes(1 << 30)}}
+
+	if got := TierNames(user, policy, up); !slices.Equal(got, []string{"admin"}) {
+		t.Errorf("TierNames = %v, want [admin]", got)
 	}
 }
 
