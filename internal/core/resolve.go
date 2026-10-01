@@ -141,6 +141,20 @@ func Resolve(user User, providerID int64, policy Policy, up UserPolicy) Resoluti
 	return result
 }
 
+// TierNames lists the tiers a person is entitled to, whatever the overrides.
+func TierNames(user User, policy Policy, up UserPolicy) []string {
+	candidates, _ := candidateTiers(user, policy, up)
+	var names []string
+	for _, candidate := range candidates {
+		tier, known := policy.Tiers[candidate.TierID]
+		if known && !slices.Contains(names, tier.Name) {
+			names = append(names, tier.Name)
+		}
+	}
+	slices.Sort(names)
+	return names
+}
+
 type tierCandidate struct {
 	TierID    int64
 	GroupUUID string
