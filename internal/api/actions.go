@@ -491,9 +491,10 @@ func actionKeys(opts Options) http.HandlerFunc {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		if err := keyTemplate.ExecuteTemplate(w, "key.html", struct {
-			Label string
-			Value string
-		}{Label: label, Value: value.Reveal()}); err != nil {
+			Label    string
+			Value    string
+			SiteName string
+		}{Label: label, Value: value.Reveal(), SiteName: opts.SiteName}); err != nil {
 			opts.Log.Error("render the issued key", "error", err)
 		}
 	}

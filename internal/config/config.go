@@ -69,6 +69,10 @@ type Config struct {
 
 	// PublicURL names this instance in a notification.
 	PublicURL string
+
+	// SiteName is appended to every page title, so a browser tab says which
+	// instance it is. Empty leaves the titles alone.
+	SiteName string
 }
 
 // LDAP is the identity source. It is optional: manual users exist with no
@@ -179,6 +183,7 @@ func Load(env Env) (*Config, error) {
 	cfg.WebhookURL = env.get("NUNO_WEBHOOK_URL", "")
 	cfg.WebhookToken = core.Secret(env.get("NUNO_WEBHOOK_TOKEN", ""))
 	cfg.PublicURL = env.get("NUNO_PUBLIC_URL", "")
+	cfg.SiteName = strings.TrimSpace(env.get("NUNO_SITE_NAME", ""))
 	for _, d := range []struct {
 		key    string
 		target *time.Duration

@@ -69,6 +69,7 @@ func staticHandler() http.Handler {
 // warnings. Each page embeds it and adds its own data.
 type layout struct {
 	Version  string
+	SiteName string
 	Now      time.Time
 	Tab      string
 	Slug     string
@@ -84,6 +85,7 @@ type layout struct {
 func newLayout(opts Options, r *http.Request, tab string) layout {
 	return layout{
 		Version:  opts.Version,
+		SiteName: opts.SiteName,
 		Now:      time.Now().UTC(),
 		Tab:      tab,
 		Slug:     strings.ToLower(tab),

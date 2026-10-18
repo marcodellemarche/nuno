@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/marcodellemarche/nuno/internal/core"
 )
@@ -313,5 +314,24 @@ func TestARedundantOverrideIsNotTaggedInThePage(t *testing.T) {
 	mux = Routes(Options{Version: "test", Store: s, Actor: &fakeActor{}, Log: discard()})
 	if body := pageBody(t, mux, "/"); !strings.Contains(body, "override-pill") {
 		t.Error("an override that changes the ceiling must be tagged")
+	}
+}
+
+func TestTheSiteNameIsAppendedToEveryTitle(t *testing.T) {
+	plain := routes(t, populated(), "")
+	if body := pageBody(t, plain, "/"); !strings.Contains(body, "<title>Nuno: Quotas</title>") {
+		t.Errorf("with no site name the title must stay as it is: %s", body)
+	}
+
+	named := Routes(Options{
+		Version: "test", Store: populated(), Log: discard(),
+		RefreshInterval: 15 * time.Minute, SiteName: "Example Lab",
+	})
+	for _, path := range pagePaths {
+		t.Run(path, func(t *testing.T) {
+			if body := pageBody(t, named, path); !strings.Contains(body, " · Example Lab</title>") {
+				t.Errorf("the title must carry the site name: %s", body)
+			}
+		})
 	}
 }

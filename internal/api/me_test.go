@@ -159,3 +159,20 @@ func TestMeCarriesNoAdminLinks(t *testing.T) {
 		t.Errorf("the widget body must not carry admin actions: %s", body)
 	}
 }
+
+func TestMeCarriesTheSiteNameInItsTitle(t *testing.T) {
+	mux := Routes(Options{
+		Version: "test", Store: populated(), Log: discard(),
+		RefreshInterval: 15 * time.Minute, TrustedProxy: "10.0.0.0/8", SiteName: "Example Lab",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/me", nil)
+	req.RemoteAddr = "10.1.2.3:5555"
+	req.Header.Set("Remote-User", "alice")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if body := rec.Body.String(); !strings.Contains(body, "<title>Your quota · Example Lab</title>") {
+		t.Errorf("the title must carry the site name: %s", body)
+	}
+}
