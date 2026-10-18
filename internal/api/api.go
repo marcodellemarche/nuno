@@ -51,6 +51,9 @@ type Options struct {
 	// a container on the same network cannot claim to be somebody else. Empty
 	// means no header is trusted (NFR-14).
 	TrustedProxy string
+
+	// SiteName is appended to every page title. Empty leaves them as they are.
+	SiteName string
 }
 
 // Routes builds the admin surface. It binds to localhost unless the

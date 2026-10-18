@@ -66,7 +66,7 @@ func meHandler(opts Options) http.HandlerFunc {
 		// A person with no linked account is not an error: the widget still
 		// has to render something, and a raw 404 is what it would show
 		// instead. The empty state is a page, not a failure.
-		page := mePage{Theme: theme, Missing: found == nil}
+		page := mePage{Theme: theme, Missing: found == nil, SiteName: opts.SiteName}
 		if found != nil {
 			page.User = *found
 		}
@@ -79,9 +79,10 @@ func meHandler(opts Options) http.HandlerFunc {
 // mePage is what the template renders: the person's usage, and the theme the
 // widget told us it is embedded in.
 type mePage struct {
-	User    core.UsageUser
-	Theme   string
-	Missing bool
+	User     core.UsageUser
+	Theme    string
+	Missing  bool
+	SiteName string
 }
 
 // fromTrustedProxy reports whether the request arrived from the configured
