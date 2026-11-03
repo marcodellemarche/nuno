@@ -317,6 +317,25 @@ func TestARedundantOverrideIsNotTaggedInThePage(t *testing.T) {
 	}
 }
 
+func TestTheTierPillSurvivesAnOverrideOnEveryService(t *testing.T) {
+	tierID := int64(1)
+	s := populated()
+	s.policy = core.Policy{
+		Tiers: map[int64]core.Tier{1: {
+			ID: 1, Name: "standard", Budget: core.MustBytes(100 << 30),
+			Allocations: []core.Allocation{{ProviderID: 10, Mode: core.ModeAbsolute, Value: 50 << 30}},
+		}},
+		DefaultTierID: &tierID,
+	}
+	s.userPolicies = map[int64]core.UserPolicy{
+		1: {ProviderOverrides: map[int64]core.Quota{10: core.MustBytes(60 << 30)}},
+	}
+	mux := Routes(Options{Version: "test", Store: s, Actor: &fakeActor{}, Log: discard()})
+	if body := pageBody(t, mux, "/"); !strings.Contains(body, `<span class="tier-pill">standard</span>`) {
+		t.Error("an override on every service must not hide the tier")
+	}
+}
+
 func TestTheSiteNameIsAppendedToEveryTitle(t *testing.T) {
 	plain := routes(t, populated(), "")
 	if body := pageBody(t, plain, "/"); !strings.Contains(body, "<title>Nuno: Quotas</title>") {

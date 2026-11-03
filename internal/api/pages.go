@@ -134,12 +134,13 @@ func personFor(ctx context.Context, opts Options, entry core.UsageUser, user cor
 		observed[p.Name] = p
 	}
 
+	providerIDs := make([]int64, 0, len(providers))
 	for _, provider := range providers {
-		resolution := core.Resolve(user, provider.ID, policy, up)
-		if resolution.TierName != "" && !slices.Contains(view.TierPills, resolution.TierName) {
-			view.TierPills = append(view.TierPills, resolution.TierName)
-		}
+		providerIDs = append(providerIDs, provider.ID)
+	}
+	view.TierPills = core.TierNames(user, providerIDs, policy, up)
 
+	for _, provider := range providers {
 		override, hasOverride := up.ProviderOverrides[provider.ID]
 		usageRow, linked := observed[provider.Name]
 		if !linked && !hasOverride {
