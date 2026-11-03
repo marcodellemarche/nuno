@@ -141,14 +141,15 @@ func Resolve(user User, providerID int64, policy Policy, up UserPolicy) Resoluti
 	return result
 }
 
-// TierNames lists the tiers a person is entitled to, whatever the overrides.
-func TierNames(user User, policy Policy, up UserPolicy) []string {
-	candidates, _ := candidateTiers(user, policy, up)
+// TierNames lists the tiers that win at least one of the providers once the
+// provider overrides are set aside, so an override hides no tier.
+func TierNames(user User, providerIDs []int64, policy Policy, up UserPolicy) []string {
+	tiersOnly := UserPolicy{TierOverride: up.TierOverride}
 	var names []string
-	for _, candidate := range candidates {
-		tier, known := policy.Tiers[candidate.TierID]
-		if known && !slices.Contains(names, tier.Name) {
-			names = append(names, tier.Name)
+	for _, providerID := range providerIDs {
+		name := Resolve(user, providerID, policy, tiersOnly).TierName
+		if name != "" && !slices.Contains(names, name) {
+			names = append(names, name)
 		}
 	}
 	slices.Sort(names)

@@ -134,7 +134,11 @@ func personFor(ctx context.Context, opts Options, entry core.UsageUser, user cor
 		observed[p.Name] = p
 	}
 
-	view.TierPills = core.TierNames(user, policy, up)
+	providerIDs := make([]int64, 0, len(providers))
+	for _, provider := range providers {
+		providerIDs = append(providerIDs, provider.ID)
+	}
+	view.TierPills = core.TierNames(user, providerIDs, policy, up)
 
 	for _, provider := range providers {
 		override, hasOverride := up.ProviderOverrides[provider.ID]

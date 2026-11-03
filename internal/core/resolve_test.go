@@ -169,8 +169,44 @@ func TestTierNamesIgnoreProviderOverrides(t *testing.T) {
 	user := User{ID: 1, UID: "alice", GroupUUIDs: []string{"g"}}
 	up := UserPolicy{ProviderOverrides: map[int64]Quota{nextcloudID: MustBytes(99 << 30), immichID: MustBytes(1 << 30)}}
 
-	if got := TierNames(user, policy, up); !slices.Equal(got, []string{"admin"}) {
+	if got := TierNames(user, []int64{nextcloudID, immichID}, policy, up); !slices.Equal(got, []string{"admin"}) {
 		t.Errorf("TierNames = %v, want [admin]", got)
+	}
+}
+
+// A tier the person is entitled to but that wins no provider is not shown,
+// because the pills say which tiers produce the ceilings (FR-19).
+func TestTierNamesListOnlyWinningTiers(t *testing.T) {
+	basic := tier(1, "basic", MustBytes(2<<30), alloc(nextcloudID, ModeAbsolute, 1<<30), alloc(immichID, ModeAbsolute, 1<<30))
+	admin := tier(2, "admin", MustBytes(20<<30), alloc(nextcloudID, ModeAbsolute, 10<<30), alloc(immichID, ModeAbsolute, 10<<30))
+	photos := tier(3, "photos", MustBytes(50<<30), alloc(immichID, ModeAbsolute, 50<<30))
+	defaultID := int64(1)
+	policy := Policy{
+		Tiers:         map[int64]Tier{1: basic, 2: admin, 3: photos},
+		GroupTiers:    map[string]int64{"g-basic": 1, "g-admin": 2, "g-photos": 3},
+		DefaultTierID: &defaultID,
+	}
+	providerIDs := []int64{nextcloudID, immichID}
+	overrideEverything := map[int64]Quota{nextcloudID: MustBytes(1 << 30), immichID: MustBytes(1 << 30)}
+	photosTier := int64(3)
+
+	cases := []struct {
+		name   string
+		groups []string
+		up     UserPolicy
+		want   []string
+	}{
+		{"one tier wins everywhere", []string{"g-basic", "g-admin"}, UserPolicy{}, []string{"admin"}},
+		{"each tier wins a provider", []string{"g-admin", "g-photos"}, UserPolicy{}, []string{"admin", "photos"}},
+		{"overrides everywhere", []string{"g-basic", "g-admin"}, UserPolicy{ProviderOverrides: overrideEverything}, []string{"admin"}},
+		{"tier override", []string{"g-admin"}, UserPolicy{TierOverride: &photosTier}, []string{"photos"}},
+		{"default tier", nil, UserPolicy{ProviderOverrides: overrideEverything}, []string{"basic"}},
+	}
+	for _, c := range cases {
+		user := User{ID: 1, UID: "alice", GroupUUIDs: c.groups}
+		if got := TierNames(user, providerIDs, policy, c.up); !slices.Equal(got, c.want) {
+			t.Errorf("%s: TierNames = %v, want %v", c.name, got, c.want)
+		}
 	}
 }
 
