@@ -98,6 +98,8 @@ nuno.{$BASE_DOMAIN} {
 
 With forward auth in front, leave `NUNO_ADMIN_PASSWORD` unset. Without it, set one: "no proxy yet" must never mean "no auth".
 
+Set `NUNO_SITE_NAME` to have every page title end with it (`Nuno: Quotas · Home Lab`), which helps when the tab sits next to the other services of the same stack. Unset, the titles stay as they are.
+
 ### Keep the panel off the shared network
 
 The admin panel has no password of its own when a proxy authenticates in front of it, and it shares a Docker network with every other service. Without a gate, any container on that network can reach `nuno:8080` directly and skip the proxy entirely. `NUNO_PROXY_SECRET` closes that: the proxy injects `X-Nuno-Proxy-Secret`, and the panel refuses every request that does not carry it. `/healthz` and the key-authenticated `/api/v1/usage` stay reachable, because a dashboard widget reads usage server-side and never sees the proxy.

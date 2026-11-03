@@ -212,3 +212,13 @@ func TestPrintingTheConfigCannotLeakASecret(t *testing.T) {
 		}
 	}
 }
+
+func TestSiteNameIsOptional(t *testing.T) {
+	cfg, err := Load(Env{"NUNO_SITE_NAME": "  Example Lab "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SiteName != "Example Lab" {
+		t.Errorf("site name = %q", cfg.SiteName)
+	}
+}
