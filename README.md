@@ -4,7 +4,7 @@
 
 # Nuno
 
-> Status: **v0.5.2** (2026-09-26). Identity sync, linking, the usage page and endpoint, tiers and allocations, the planner and the applier with its guardrails all run, the CLI covers the day-two work, the admin panel works on a phone and edits ceilings in GiB, and a forward-auth `/me` page shows each person their own quota. A new directory user now gets their tier ceiling on a schedule, without a restart or a click, and Nuno retries at startup while a service is not up yet. The image is published at `ghcr.io/marcodellemarche/nuno`. Not yet: the HTTP client mode that would let a command run against a live server, and a token-based per-person endpoint. The design is frozen and every decision is recorded.
+> Status: **v0.5.3** (2026-11-04). Identity sync, linking, the usage page and endpoint, tiers and allocations, the planner and the applier with its guardrails all run, the CLI covers the day-two work, the admin panel works on a phone and edits ceilings in GiB, and a forward-auth `/me` page shows each person their own quota. A new directory user now gets their tier ceiling on a schedule, without a restart or a click, and Nuno retries at startup while a service is not up yet. The image is published at `ghcr.io/marcodellemarche/nuno`. Not yet: the HTTP client mode that would let a command run against a live server, and a token-based per-person endpoint. The design is frozen and every decision is recorded.
 
 Nuno is a quota and usage control plane for self-hosted service stacks.
 
@@ -110,7 +110,7 @@ One container next to the services it manages. See [`docs/deployment.md`](docs/d
 ```yaml
 services:
   nuno:
-    image: ghcr.io/marcodellemarche/nuno:0.5.2
+    image: ghcr.io/marcodellemarche/nuno:0.5.3
     env_file: .env
     volumes:
       - ./data:/data          # SQLite DB and config
